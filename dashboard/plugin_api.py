@@ -94,6 +94,7 @@ class CreateCompanyBody(BaseModel):
     name: str
     slug: Optional[str] = None
     description: Optional[str] = None
+    kind: Optional[str] = None
 
 
 class RenameCompanyBody(BaseModel):
@@ -114,7 +115,7 @@ def create_company(payload: CreateCompanyBody):
     conn = _conn()
     try:
         company_id = fleet_db.create_company(
-            conn, name=payload.name, slug=payload.slug, description=payload.description
+            conn, name=payload.name, slug=payload.slug, description=payload.description, kind=payload.kind
         )
         company = fleet_db.get_company_by_id(conn, company_id)
         return {"company": company.to_dict() if company else None}

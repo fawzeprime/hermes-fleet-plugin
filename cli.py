@@ -20,6 +20,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     c_create.add_argument("name")
     c_create.add_argument("--slug", default=None)
     c_create.add_argument("--description", default=None)
+    c_create.add_argument("--kind", choices=fleet_db.VALID_COMPANY_KINDS, default=None)
 
     c_list = company_sub.add_parser("list", help="List companies")
     c_list.add_argument("--json", action="store_true")
@@ -180,7 +181,7 @@ def _print_json(payload: Any) -> None:
 
 def _fmt_company_line(company: fleet_db.Company) -> str:
     tag = " [archived]" if company.archived else ""
-    return f"  ◆ {company.slug}  {company.name}{tag}"
+    return f"  ◆ {company.slug}  {company.name}  ({company.kind}){tag}"
 
 
 def _fmt_team_line(team: fleet_db.Team) -> str:
@@ -211,7 +212,7 @@ def _fmt_member_line(member: fleet_db.Membership, managers: dict) -> str:
 def _cmd_company_create(args: argparse.Namespace) -> None:
     with fleet_db.connect_closing() as conn:
         company_id = fleet_db.create_company(
-            conn, name=args.name, slug=args.slug, description=args.description
+            conn, name=args.name, slug=args.slug, description=args.description, kind=args.kind
         )
         company = fleet_db.get_company_by_id(conn, company_id)
     print(f"Created company {company.slug!r} ({company_id})" if company else f"Created company ({company_id})")
@@ -240,7 +241,7 @@ def _cmd_company_show(args: argparse.Namespace) -> None:
     if args.json:
         _print_json(company.to_dict())
         return
-    print(f"\n{company.name}  ({company.slug})")
+    print(f"\n{company.name}  ({company.slug})  [{company.kind}]")
     if company.description:
         print(f"  {company.description}")
     print(f"\n  {len(company.teams)} team(s):")

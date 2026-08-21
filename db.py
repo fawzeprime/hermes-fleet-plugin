@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS companies (
     slug        TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
     description TEXT,
+    kind        TEXT NOT NULL DEFAULT 'company',
     created_at  INTEGER NOT NULL,
     archived    INTEGER NOT NULL DEFAULT 0
 );
@@ -101,12 +102,13 @@ CREATE INDEX IF NOT EXISTS idx_memberships_profile ON memberships(profile);
 CREATE INDEX IF NOT EXISTS idx_memberships_reports_to ON memberships(reports_to);
 """
 
-# Columns that may be added after v1 — re-applied idempotently on every open
-# so a legacy DB upgrades in place. Empty today; kept for parity with
-# projects_db.py's own forward-compat hook.
-_OPTIONAL_COMPANY_COLUMNS: tuple[str, ...] = ()
-_OPTIONAL_TEAM_COLUMNS: tuple[str, ...] = ()
-_OPTIONAL_MEMBERSHIP_COLUMNS: tuple[str, ...] = ()
+# Columns added after v1 — re-applied idempotently on every open so a
+# legacy DB upgrades in place. Each entry is (column_name, full_ddl).
+_OPTIONAL_COMPANY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("kind", "kind TEXT NOT NULL DEFAULT 'company'"),
+)
+_OPTIONAL_TEAM_COLUMNS: tuple[tuple[str, str], ...] = ()
+_OPTIONAL_MEMBERSHIP_COLUMNS: tuple[tuple[str, str], ...] = ()
 
 
 def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
@@ -118,9 +120,9 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         if not columns:
             continue
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-        for col in columns:
+        for col, ddl in columns:
             if col not in cols:
-                add_column_if_missing(conn, table, col, f"{col} TEXT")
+                add_column_if_missing(conn, table, col, ddl)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +173,22 @@ def normalize_board_slug(slug: Optional[str]) -> Optional[str]:
             f"'-' or '_'"
         )
     return s
+
+
+# A company's "kind" is a display/classification tag only — it does not
+# change hierarchy behavior (a "group" or "team"-kind top-level entity can
+# still contain nested teams the same as a "company"-kind one).
+VALID_COMPANY_KINDS = ("company", "team", "group")
+DEFAULT_COMPANY_KIND = "company"
+
+
+def normalize_company_kind(kind: Optional[str]) -> str:
+    resolved = (kind or DEFAULT_COMPANY_KIND).strip().lower()
+    if resolved not in VALID_COMPANY_KINDS:
+        raise ValueError(
+            f"invalid company kind {kind!r}: must be one of {', '.join(VALID_COMPANY_KINDS)}"
+        )
+    return resolved
 
 
 def _new_company_id() -> str:
@@ -301,6 +319,7 @@ class Company:
     name: str
     created_at: int
     description: Optional[str] = None
+    kind: str = DEFAULT_COMPANY_KIND
     archived: bool = False
     teams: List[Team] = field(default_factory=list)
 
@@ -310,6 +329,7 @@ class Company:
             "slug": self.slug,
             "name": self.name,
             "description": self.description,
+            "kind": self.kind,
             "archived": bool(self.archived),
             "created_at": self.created_at,
             "teams": [t.to_dict() for t in self.teams],
@@ -322,6 +342,7 @@ def _company_from_row(row: sqlite3.Row) -> Company:
         slug=row["slug"],
         name=row["name"],
         description=row["description"],
+        kind=row["kind"] if "kind" in row.keys() else DEFAULT_COMPANY_KIND,
         archived=bool(row["archived"]),
         created_at=row["created_at"],
     )
@@ -362,17 +383,19 @@ def create_company(
     name: str,
     slug: Optional[str] = None,
     description: Optional[str] = None,
+    kind: Optional[str] = None,
 ) -> str:
     name = (name or "").strip()
     if not name:
         raise ValueError("company name is required")
+    resolved_kind = normalize_company_kind(kind)
     resolved_slug = normalize_slug(slug) if slug else _slugify(name)
     company_id = _new_company_id()
     with write_txn(conn):
         conn.execute(
-            "INSERT INTO companies (id, slug, name, description, created_at, archived) "
-            "VALUES (?, ?, ?, ?, ?, 0)",
-            (company_id, resolved_slug, name, description, _now()),
+            "INSERT INTO companies (id, slug, name, description, kind, created_at, archived) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (company_id, resolved_slug, name, description, resolved_kind, _now()),
         )
     return company_id
 

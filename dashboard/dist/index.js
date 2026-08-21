@@ -15,12 +15,31 @@
 
   const { React } = SDK;
   const h = React.createElement;
-  const { Card, CardContent, Badge, Button, Input, Label } = SDK.components;
+  const { Card, CardContent, Badge, Button, Input, Label, Select, SelectOption } = SDK.components;
   const { useState, useEffect, useCallback } = SDK.hooks;
   const { cn } = SDK.utils;
 
+  // Keep in sync with db.VALID_COMPANY_KINDS.
+  const COMPANY_KINDS = ["company", "team", "group"];
+
+  // fetchJSON passes `init` straight through to native fetch() without
+  // touching `body` or headers — a JSON string body with no explicit
+  // Content-Type defaults to text/plain, which makes the backend's Pydantic
+  // model validation see a raw string instead of a parsed object (422:
+  // "Input should be a valid dictionary or object"). Set it here once so
+  // every POST/PATCH call site doesn't have to remember.
   function api(path, options) {
-    return SDK.fetchJSON("/api/plugins/hermes-fleet" + path, options);
+    const opts = Object.assign({}, options);
+    if (opts.body && !opts.headers) {
+      opts.headers = { "Content-Type": "application/json" };
+    }
+    return SDK.fetchJSON("/api/plugins/hermes-fleet" + path, opts);
+  }
+
+  // The SDK's Select fires onValueChange(value) directly (shadcn-style
+  // popup, not a native <select>), mirroring the kanban dashboard plugin.
+  function selectChangeHandler(setter) {
+    return { onValueChange: function (v) { setter(v == null ? "" : v); } };
   }
 
   // ---------------------------------------------------------------------
@@ -47,29 +66,43 @@
     const [open, setOpen] = useState(false);
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
+    const [kind, setKind] = useState("company");
     const [error, setError] = useState(null);
 
     if (!open) {
-      return h(Button, { onClick: function () { setOpen(true); } }, "+ Company");
+      return h(Button, { onClick: function () { setOpen(true); } }, "+ Fleet");
     }
 
     function submit() {
       api("/companies", {
         method: "POST",
-        body: JSON.stringify({ name: name, description: description || null }),
+        body: JSON.stringify({ name: name, description: description || null, kind: kind }),
       })
-        .then(function () { setOpen(false); setName(""); setDescription(""); setError(null); onDone(); })
+        .then(function () { setOpen(false); setName(""); setDescription(""); setKind("company"); setError(null); onDone(); })
         .catch(function (err) { setError(String(err)); });
     }
 
-    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create company" },
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create fleet" },
       h("div", { className: "hf-field" },
         h(Label, null, "Name"),
         h(Input, { value: name, onChange: function (e) { setName(e.target.value); }, autoFocus: true, required: true })
       ),
       h("div", { className: "hf-field" },
+        h(Label, null, "Type"),
+        h(Select, Object.assign({ value: kind }, selectChangeHandler(setKind)),
+          COMPANY_KINDS.map(function (k) {
+            return h(SelectOption, { key: k, value: k }, k.charAt(0).toUpperCase() + k.slice(1));
+          })
+        )
+      ),
+      h("div", { className: "hf-field" },
         h(Label, null, "Description"),
-        h(Input, { value: description, onChange: function (e) { setDescription(e.target.value); } })
+        h("textarea", {
+          className: "hf-textarea",
+          value: description,
+          onChange: function (e) { setDescription(e.target.value); },
+          rows: 4,
+        })
       ),
       error && h("div", { className: "hf-error" }, error)
     );
@@ -218,7 +251,10 @@
     return h(Card, { className: "hf-company" },
       h(CardContent, null,
         h("div", { className: "hf-company-header" },
-          h("h2", null, company.name),
+          h("div", { className: "hf-company-title" },
+            h("h2", null, company.name),
+            h(Badge, { variant: "outline" }, company.kind)
+          ),
           h(AddTeamForm, { companySlug: company.slug, onDone: onChanged })
         ),
         company.description && h("p", { className: "hf-description" }, company.description),

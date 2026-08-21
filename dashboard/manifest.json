@@ -1,0 +1,14 @@
+{
+  "name": "hermes-fleet",
+  "label": "Fleet",
+  "description": "Companies, teams, and reporting lines across Hermes agent profiles",
+  "icon": "Users",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/fleet",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

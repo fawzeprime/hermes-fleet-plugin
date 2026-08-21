@@ -1,0 +1,278 @@
+/**
+ * Hermes Fleet — Dashboard Plugin
+ *
+ * Org-chart view (companies -> teams -> members) backed by ~/.hermes/fleet.db.
+ * Calls the plugin's backend at /api/plugins/hermes-fleet/.
+ *
+ * Plain IIFE, no build step. Uses window.__HERMES_PLUGIN_SDK__ for React +
+ * shadcn primitives, mirroring the kanban dashboard plugin's structure.
+ */
+(function () {
+  "use strict";
+
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  if (!SDK || !window.__HERMES_PLUGINS__) return;
+
+  const { React } = SDK;
+  const h = React.createElement;
+  const { Card, CardContent, Badge, Button, Input, Label } = SDK.components;
+  const { useState, useEffect, useCallback } = SDK.hooks;
+  const { cn } = SDK.utils;
+
+  function api(path, options) {
+    return SDK.fetchJSON("/api/plugins/hermes-fleet" + path, options);
+  }
+
+  // ---------------------------------------------------------------------
+  // Small inline forms
+  // ---------------------------------------------------------------------
+
+  function InlineForm({ onCancel, onSubmit, submitLabel, children }) {
+    return h("form", {
+      className: "hf-inline-form",
+      onSubmit: function (e) {
+        e.preventDefault();
+        onSubmit();
+      },
+    },
+      children,
+      h("div", { className: "hf-inline-form-actions" },
+        h(Button, { type: "submit" }, submitLabel),
+        h(Button, { type: "button", variant: "ghost", onClick: onCancel }, "Cancel")
+      )
+    );
+  }
+
+  function AddCompanyForm({ onDone }) {
+    const [open, setOpen] = useState(false);
+    const [name, setName] = useState("");
+    const [description, setDescription] = useState("");
+    const [error, setError] = useState(null);
+
+    if (!open) {
+      return h(Button, { onClick: function () { setOpen(true); } }, "+ Company");
+    }
+
+    function submit() {
+      api("/companies", {
+        method: "POST",
+        body: JSON.stringify({ name: name, description: description || null }),
+      })
+        .then(function () { setOpen(false); setName(""); setDescription(""); setError(null); onDone(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create company" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Name"),
+        h(Input, { value: name, onChange: function (e) { setName(e.target.value); }, autoFocus: true, required: true })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Description"),
+        h(Input, { value: description, onChange: function (e) { setDescription(e.target.value); } })
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function AddTeamForm({ companySlug, onDone }) {
+    const [open, setOpen] = useState(false);
+    const [name, setName] = useState("");
+    const [error, setError] = useState(null);
+
+    if (!open) {
+      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Team");
+    }
+
+    function submit() {
+      api("/teams", {
+        method: "POST",
+        body: JSON.stringify({ name: name, company: companySlug }),
+      })
+        .then(function () { setOpen(false); setName(""); setError(null); onDone(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create team" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Team name"),
+        h(Input, { value: name, onChange: function (e) { setName(e.target.value); }, autoFocus: true, required: true })
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function AddMemberForm({ companySlug, teamSlug, existingProfiles, allProfiles, onDone }) {
+    const [open, setOpen] = useState(false);
+    const [profile, setProfile] = useState("");
+    const [role, setRole] = useState("");
+    const [reportsTo, setReportsTo] = useState("");
+    const [error, setError] = useState(null);
+
+    if (!open) {
+      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Member");
+    }
+
+    function submit() {
+      api("/teams/" + encodeURIComponent(teamSlug) + "/members?company=" + encodeURIComponent(companySlug), {
+        method: "POST",
+        body: JSON.stringify({ profile: profile, role: role || null, reports_to: reportsTo || null }),
+      })
+        .then(function () { setOpen(false); setProfile(""); setRole(""); setReportsTo(""); setError(null); onDone(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Add member" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Profile"),
+        h(Input, {
+          value: profile,
+          onChange: function (e) { setProfile(e.target.value); },
+          list: "hf-profile-options",
+          placeholder: "e.g. seer",
+          autoFocus: true,
+          required: true,
+        }),
+        h("datalist", { id: "hf-profile-options" }, allProfiles.map(function (p) {
+          return h("option", { key: p, value: p });
+        }))
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Role"),
+        h(Input, { value: role, onChange: function (e) { setRole(e.target.value); }, placeholder: "e.g. Project Manager" })
+      ),
+      existingProfiles.length > 0 && h("div", { className: "hf-field" },
+        h(Label, null, "Reports to (optional)"),
+        h(Input, {
+          value: reportsTo,
+          onChange: function (e) { setReportsTo(e.target.value); },
+          list: "hf-manager-options",
+          placeholder: "profile on this team",
+        }),
+        h("datalist", { id: "hf-manager-options" }, existingProfiles.map(function (p) {
+          return h("option", { key: p, value: p });
+        }))
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Tree rendering
+  // ---------------------------------------------------------------------
+
+  function managerLookup(members) {
+    const byId = {};
+    members.forEach(function (m) { byId[m.id] = m.profile; });
+    return byId;
+  }
+
+  function MemberRow({ member, managers, companySlug, teamSlug, onChanged }) {
+    const managerName = member.reports_to ? managers[member.reports_to] : null;
+    return h("div", { className: "hf-member" },
+      h("span", { className: "hf-member-name" }, member.profile),
+      member.role && h(Badge, { variant: "secondary" }, member.role),
+      managerName && h("span", { className: "hf-member-reports" }, "reports to " + managerName),
+      h(Button, {
+        variant: "ghost",
+        className: "hf-remove-btn",
+        onClick: function () {
+          api(
+            "/teams/" + encodeURIComponent(teamSlug) + "/members/" + encodeURIComponent(member.profile) +
+              "?company=" + encodeURIComponent(companySlug),
+            { method: "DELETE" }
+          ).then(onChanged).catch(function (err) { window.alert(String(err)); });
+        },
+      }, "Remove")
+    );
+  }
+
+  function TeamCard({ team, companySlug, allProfiles, onChanged }) {
+    const managers = managerLookup(team.members);
+    const existingProfiles = team.members.map(function (m) { return m.profile; });
+    return h(Card, { className: "hf-team" },
+      h(CardContent, null,
+        h("div", { className: "hf-team-header" },
+          h("strong", null, team.name),
+          team.kanban_board_slug && h(Badge, { variant: "outline" }, "board: " + team.kanban_board_slug)
+        ),
+        team.description && h("p", { className: "hf-description" }, team.description),
+        h("div", { className: "hf-members" },
+          team.members.length === 0 && h("div", { className: "hf-empty" }, "No members yet."),
+          team.members.map(function (m) {
+            return h(MemberRow, {
+              key: m.id, member: m, managers: managers,
+              companySlug: companySlug, teamSlug: team.slug, onChanged: onChanged,
+            });
+          })
+        ),
+        h(AddMemberForm, {
+          companySlug: companySlug, teamSlug: team.slug,
+          existingProfiles: existingProfiles, allProfiles: allProfiles, onDone: onChanged,
+        })
+      )
+    );
+  }
+
+  function CompanyCard({ company, allProfiles, onChanged }) {
+    return h(Card, { className: "hf-company" },
+      h(CardContent, null,
+        h("div", { className: "hf-company-header" },
+          h("h2", null, company.name),
+          h(AddTeamForm, { companySlug: company.slug, onDone: onChanged })
+        ),
+        company.description && h("p", { className: "hf-description" }, company.description),
+        h("div", { className: "hf-teams" },
+          company.teams.length === 0 && h("div", { className: "hf-empty" }, "No teams yet."),
+          company.teams.map(function (t) {
+            return h(TeamCard, { key: t.id, team: t, companySlug: company.slug, allProfiles: allProfiles, onChanged: onChanged });
+          })
+        )
+      )
+    );
+  }
+
+  function FleetPage() {
+    const [companies, setCompanies] = useState([]);
+    const [profiles, setProfiles] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const load = useCallback(function () {
+      setLoading(true);
+      api("/org")
+        .then(function (payload) { setCompanies((payload && payload.companies) || []); setError(null); })
+        .catch(function (err) { setError(String(err)); })
+        .finally(function () { setLoading(false); });
+    }, []);
+
+    useEffect(function () {
+      load();
+      api("/profiles").then(function (payload) { setProfiles((payload && payload.profiles) || []); }).catch(function () {});
+    }, [load]);
+
+    return h("div", { className: "hf-page" },
+      h("div", { className: "hf-header" },
+        h("div", null,
+          h("div", { className: "hf-kicker" }, "Org chart"),
+          h("h1", null, "Hermes Fleet"),
+          h("p", null, "Companies, teams, and reporting lines across Hermes agent profiles.")
+        ),
+        h("div", { className: "hf-header-actions" },
+          h(Button, { onClick: load, variant: "outline" }, "Refresh"),
+          h(AddCompanyForm, { onDone: load })
+        )
+      ),
+      error && h(Card, { className: "hf-error-card" }, h(CardContent, null, String(error))),
+      loading && companies.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
+      !loading && companies.length === 0 && !error && h(Card, { className: cn("hf-empty-card") },
+        h(CardContent, null, "No companies yet. Create one to get started.")
+      ),
+      h("div", { className: "hf-companies" }, companies.map(function (c) {
+        return h(CompanyCard, { key: c.id, company: c, allProfiles: profiles, onChanged: load });
+      }))
+    );
+  }
+
+  window.__HERMES_PLUGINS__.register("hermes-fleet", FleetPage);
+})();

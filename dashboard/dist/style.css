@@ -1,0 +1,155 @@
+.hf-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.hf-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hf-header h1 {
+  margin: 0.15rem 0;
+  font-size: 1.5rem;
+}
+
+.hf-header p {
+  margin: 0;
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.hf-kicker {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.hf-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.hf-companies {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.hf-company-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.hf-company-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.hf-description {
+  opacity: 0.7;
+  font-size: 0.85rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.hf-teams {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.hf-team {
+  margin-left: 0.5rem;
+}
+
+.hf-team-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hf-members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+
+.hf-member {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.375rem;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.hf-member-name {
+  font-weight: 600;
+}
+
+.hf-member-reports {
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+.hf-remove-btn {
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+.hf-remove-btn:hover {
+  opacity: 1;
+}
+
+.hf-empty {
+  opacity: 0.55;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.hf-empty-card,
+.hf-error-card {
+  padding: 0.5rem;
+}
+
+.hf-error {
+  color: var(--destructive, #d33);
+  font-size: 0.85rem;
+}
+
+.hf-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border-radius: 0.5rem;
+  background: rgba(127, 127, 127, 0.06);
+  max-width: 320px;
+}
+
+.hf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.hf-inline-form-actions {
+  display: flex;
+  gap: 0.5rem;
+}

@@ -57,7 +57,7 @@
       children,
       h("div", { className: "hf-inline-form-actions" },
         h(Button, { type: "submit" }, submitLabel),
-        h(Button, { type: "button", variant: "ghost", onClick: onCancel }, "Cancel")
+        h(Button, { type: "button", ghost: true, onClick: onCancel }, "Cancel")
       )
     );
   }
@@ -114,7 +114,7 @@
     const [error, setError] = useState(null);
 
     if (!open) {
-      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Team");
+      return h(Button, { ghost: true, onClick: function () { setOpen(true); } }, "+ Team");
     }
 
     function submit() {
@@ -143,7 +143,7 @@
     const [error, setError] = useState(null);
 
     if (!open) {
-      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Add agent");
+      return h(Button, { ghost: true, onClick: function () { setOpen(true); } }, "+ Add agent");
     }
 
     function submit() {
@@ -204,10 +204,11 @@
     const managerName = member.reports_to ? managers[member.reports_to] : null;
     return h("div", { className: "hf-member" },
       h("span", { className: "hf-member-name" }, member.profile),
-      member.role && h(Badge, { variant: "secondary" }, member.role),
+      member.role && h(Badge, { tone: "secondary" }, member.role),
       managerName && h("span", { className: "hf-member-reports" }, "reports to " + managerName),
       h(Button, {
-        variant: "ghost",
+        ghost: true,
+        destructive: true,
         className: "hf-remove-btn",
         onClick: function () {
           api(
@@ -223,11 +224,23 @@
   function TeamCard({ team, companySlug, allProfiles, onChanged }) {
     const managers = managerLookup(team.members);
     const existingProfiles = team.members.map(function (m) { return m.profile; });
+    function deleteTeam() {
+      const memberWarning = team.members.length > 0
+        ? ` This will remove all ${team.members.length} agent(s) on it.`
+        : "";
+      if (!window.confirm("Delete team \"" + team.name + "\"?" + memberWarning)) return;
+      api(
+        "/teams/" + encodeURIComponent(team.slug) + "?company=" + encodeURIComponent(companySlug) + "&force=true",
+        { method: "DELETE" }
+      ).then(onChanged).catch(function (err) { window.alert(String(err)); });
+    }
+
     return h(Card, { className: "hf-team" },
       h(CardContent, null,
         h("div", { className: "hf-team-header" },
           h("strong", null, team.name),
-          team.kanban_board_slug && h(Badge, { variant: "outline" }, "board: " + team.kanban_board_slug)
+          team.kanban_board_slug && h(Badge, { tone: "outline" }, "board: " + team.kanban_board_slug),
+          h(Button, { ghost: true, destructive: true, className: "hf-delete-team-btn", onClick: deleteTeam }, "Delete")
         ),
         team.description && h("p", { className: "hf-description" }, team.description),
         h("div", { className: "hf-members" },
@@ -248,14 +261,29 @@
   }
 
   function CompanyCard({ company, allProfiles, onChanged }) {
+    function deleteCompany() {
+      const teamCount = company.teams.length;
+      const memberCount = company.teams.reduce(function (n, t) { return n + t.members.length; }, 0);
+      const warning = teamCount > 0
+        ? ` This will also delete its ${teamCount} team(s) and ${memberCount} agent assignment(s).`
+        : "";
+      if (!window.confirm("Delete fleet \"" + company.name + "\"?" + warning)) return;
+      api("/companies/" + encodeURIComponent(company.slug) + "?force=true", { method: "DELETE" })
+        .then(onChanged)
+        .catch(function (err) { window.alert(String(err)); });
+    }
+
     return h(Card, { className: "hf-company" },
       h(CardContent, null,
         h("div", { className: "hf-company-header" },
           h("div", { className: "hf-company-title" },
             h("h2", null, company.name),
-            h(Badge, { variant: "outline" }, company.kind)
+            h(Badge, { tone: "outline" }, company.kind)
           ),
-          h(AddTeamForm, { companySlug: company.slug, onDone: onChanged })
+          h("div", { className: "hf-company-actions" },
+            h(AddTeamForm, { companySlug: company.slug, onDone: onChanged }),
+            h(Button, { ghost: true, destructive: true, onClick: deleteCompany }, "Delete fleet")
+          )
         ),
         company.description && h("p", { className: "hf-description" }, company.description),
         h("div", { className: "hf-teams" },
@@ -295,7 +323,7 @@
           h("p", null, "Companies, teams, and reporting lines across Hermes agent profiles.")
         ),
         h("div", { className: "hf-header-actions" },
-          h(Button, { onClick: load, variant: "outline" }, "Refresh"),
+          h(Button, { onClick: load, outlined: true }, "Refresh"),
           h(AddCompanyForm, { onDone: load })
         )
       ),

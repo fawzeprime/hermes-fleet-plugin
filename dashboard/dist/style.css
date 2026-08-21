@@ -59,6 +59,16 @@
   gap: 0.5rem;
 }
 
+.hf-company-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hf-delete-team-btn {
+  margin-left: auto;
+}
+
 .hf-company-header h2 {
   margin: 0;
   font-size: 1.15rem;

@@ -392,11 +392,14 @@ def create_company(
     resolved_slug = normalize_slug(slug) if slug else _slugify(name)
     company_id = _new_company_id()
     with write_txn(conn):
-        conn.execute(
-            "INSERT INTO companies (id, slug, name, description, kind, created_at, archived) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0)",
-            (company_id, resolved_slug, name, description, resolved_kind, _now()),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO companies (id, slug, name, description, kind, created_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (company_id, resolved_slug, name, description, resolved_kind, _now()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"company slug {resolved_slug!r} already exists") from exc
     return company_id
 
 

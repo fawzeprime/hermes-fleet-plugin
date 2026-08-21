@@ -143,7 +143,7 @@
     const [error, setError] = useState(null);
 
     if (!open) {
-      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Member");
+      return h(Button, { variant: "ghost", onClick: function () { setOpen(true); } }, "+ Add agent");
     }
 
     function submit() {
@@ -155,9 +155,9 @@
         .catch(function (err) { setError(String(err)); });
     }
 
-    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Add member" },
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Add agent" },
       h("div", { className: "hf-field" },
-        h(Label, null, "Profile"),
+        h(Label, null, "Agent (profile)"),
         h(Input, {
           value: profile,
           onChange: function (e) { setProfile(e.target.value); },
@@ -231,7 +231,7 @@
         ),
         team.description && h("p", { className: "hf-description" }, team.description),
         h("div", { className: "hf-members" },
-          team.members.length === 0 && h("div", { className: "hf-empty" }, "No members yet."),
+          team.members.length === 0 && h("div", { className: "hf-empty" }, "No agents on this team yet."),
           team.members.map(function (m) {
             return h(MemberRow, {
               key: m.id, member: m, managers: managers,

@@ -38,6 +38,13 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     c_delete.add_argument("slug")
     c_delete.add_argument("--force", action="store_true", help="Delete even if it has teams")
 
+    c_link = company_sub.add_parser("link-board", help="Bind a fleet (company) to a kanban board")
+    c_link.add_argument("slug")
+    c_link.add_argument("board_slug")
+
+    c_unlink = company_sub.add_parser("unlink-board", help="Unbind a fleet's kanban board")
+    c_unlink.add_argument("slug")
+
     # -- team -----------------------------------------------------------------
     p_team = subs.add_parser("team", help="Manage teams")
     team_sub = p_team.add_subparsers(dest="fleet_team_action")
@@ -125,7 +132,7 @@ def fleet_command(args: argparse.Namespace) -> int:
 def _dispatch_company(args: argparse.Namespace) -> int:
     action = getattr(args, "fleet_company_action", None)
     if not action:
-        print("Usage: hermes fleet company {create|list|show|rename|delete}")
+        print("Usage: hermes fleet company {create|list|show|rename|delete|link-board|unlink-board}")
         return 2
     handlers = {
         "create": _cmd_company_create,
@@ -133,6 +140,8 @@ def _dispatch_company(args: argparse.Namespace) -> int:
         "show": _cmd_company_show,
         "rename": _cmd_company_rename,
         "delete": _cmd_company_delete,
+        "link-board": _cmd_company_link_board,
+        "unlink-board": _cmd_company_unlink_board,
     }
     handler = handlers.get(action)
     if handler is None:
@@ -181,7 +190,8 @@ def _print_json(payload: Any) -> None:
 
 def _fmt_company_line(company: fleet_db.Company) -> str:
     tag = " [archived]" if company.archived else ""
-    return f"  ◆ {company.slug}  {company.name}  ({company.kind}){tag}"
+    board = f"  (board: {company.kanban_board_slug})" if company.kanban_board_slug else ""
+    return f"  ◆ {company.slug}  {company.name}  ({company.kind}){tag}{board}"
 
 
 def _fmt_team_line(team: fleet_db.Team) -> str:
@@ -260,6 +270,19 @@ def _cmd_company_delete(args: argparse.Namespace) -> None:
     with fleet_db.connect_closing() as conn:
         fleet_db.delete_company(conn, args.slug, force=args.force)
     print(f"Deleted company: {args.slug}")
+
+
+def _cmd_company_link_board(args: argparse.Namespace) -> None:
+    _warn_if_board_missing(args.board_slug)
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_company_board(conn, args.slug, args.board_slug)
+    print(f"Linked {args.slug!r} to board {args.board_slug!r}")
+
+
+def _cmd_company_unlink_board(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_company_board(conn, args.slug, None)
+    print(f"Unlinked board from {args.slug!r}")
 
 
 # ---------------------------------------------------------------------------

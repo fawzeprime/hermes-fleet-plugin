@@ -216,6 +216,23 @@
   margin-top: 0.25rem;
 }
 
+.hf-stat-tile-destructive .hf-stat-value {
+  color: var(--destructive, #fb2c36);
+}
+
+.hf-stat-tile-success .hf-stat-value {
+  color: var(--success, #4ade80);
+}
+
+.hf-stat-tile-clickable {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.hf-stat-tile-clickable:hover {
+  opacity: 0.8;
+}
+
 .hf-dashboard-section h3 {
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
@@ -262,7 +279,55 @@
 }
 
 /* ---------------------------------------------------------------------
- * Tab 2: Org Chart
+ * Tab 2: Tasks
+ * ------------------------------------------------------------------- */
+
+.hf-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hf-task-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.375rem;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.hf-task-status {
+  flex-shrink: 0;
+  min-width: 5.5rem;
+  text-align: center;
+}
+
+.hf-task-title {
+  flex: 1;
+  font-size: 0.88rem;
+}
+
+.hf-task-assignee {
+  font-size: 0.78rem;
+  opacity: 0.7;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.hf-task-board {
+  font-size: 0.72rem;
+  opacity: 0.5;
+  display: none;
+}
+
+.hf-task-list-with-board .hf-task-board {
+  display: inline;
+}
+
+/* ---------------------------------------------------------------------
+ * Tab 3: Org Chart
  * ------------------------------------------------------------------- */
 
 .hf-orgchart {
@@ -276,7 +341,7 @@
 }
 
 /* ---------------------------------------------------------------------
- * Tab 3: Hierarchy — classic pure-CSS nested-list org chart. Each <li>
+ * Tab 4: Hierarchy — classic pure-CSS nested-list org chart. Each <li>
  * draws its own top-connector via ::before/::after; a <ul> draws the
  * vertical drop to its own children via ::before. No layout math.
  * ------------------------------------------------------------------- */
@@ -406,4 +471,42 @@
   opacity: 0.55;
   font-style: italic;
   font-size: 0.8rem;
+}
+
+/* ---------------------------------------------------------------------
+ * Tab 5: Projects
+ * ------------------------------------------------------------------- */
+
+.hf-projects-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.hf-projects-actions {
+  display: flex;
+}
+
+.hf-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.hf-project-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.hf-project-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.hf-project-board {
+  font-size: 0.72rem;
+  opacity: 0.5;
+  margin-top: 0.4rem;
 }

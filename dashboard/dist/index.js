@@ -303,7 +303,7 @@
   // and an unassigned-profiles diagnostic chip list.
   // ---------------------------------------------------------------------
 
-  function computeFleetStats(companies, profiles) {
+  function computeFleetStats(companies, profiles, tasks) {
     let teamCount = 0;
     let assignmentCount = 0;
     const uniqueAgents = new Set();
@@ -320,6 +320,7 @@
     });
     fleetSizes.sort(function (a, b) { return b.count - a.count; });
     const unassigned = profiles.filter(function (p) { return !uniqueAgents.has(p); });
+    const blockedTaskCount = (tasks || []).filter(function (t) { return t.status === "blocked"; }).length;
     return {
       fleetCount: companies.length,
       teamCount: teamCount,
@@ -327,11 +328,16 @@
       uniqueAgentCount: uniqueAgents.size,
       fleetSizes: fleetSizes,
       unassigned: unassigned,
+      blockedTaskCount: blockedTaskCount,
     };
   }
 
-  function StatTile({ label, value }) {
-    return h(Card, { className: "hf-stat-tile" },
+  function StatTile({ label, value, tone, onClick }) {
+    return h(Card, {
+      className: cn("hf-stat-tile", tone && "hf-stat-tile-" + tone, onClick && "hf-stat-tile-clickable"),
+      onClick: onClick,
+      role: onClick ? "button" : undefined,
+    },
       h(CardContent, null,
         h("div", { className: "hf-stat-value" }, value),
         h("div", { className: "hf-stat-label" }, label)
@@ -339,16 +345,22 @@
     );
   }
 
-  function DashboardTab({ companies, profiles }) {
-    const stats = computeFleetStats(companies, profiles);
+  function DashboardTab({ companies, profiles, tasks, onOpenTasks }) {
+    const stats = computeFleetStats(companies, profiles, tasks);
     const maxFleetSize = stats.fleetSizes.reduce(function (m, f) { return Math.max(m, f.count); }, 0) || 1;
 
     return h("div", { className: "hf-dashboard" },
       h("div", { className: "hf-stats-grid" },
         h(StatTile, { label: "Fleets", value: stats.fleetCount }),
         h(StatTile, { label: "Teams", value: stats.teamCount }),
-        h(StatTile, { label: "Agent assignments", value: stats.assignmentCount }),
-        h(StatTile, { label: "Unique agents staffed", value: stats.uniqueAgentCount })
+        h(StatTile, { label: "Agent assignments", value: stats.assignmentCount, onClick: onOpenTasks }),
+        h(StatTile, { label: "Unique agents staffed", value: stats.uniqueAgentCount }),
+        h(StatTile, {
+          label: "Blocked tasks",
+          value: stats.blockedTaskCount,
+          tone: stats.blockedTaskCount > 0 ? "destructive" : "success",
+          onClick: onOpenTasks,
+        })
       ),
       stats.fleetSizes.length > 0 && h(Card, { className: "hf-dashboard-section" },
         h(CardContent, null,
@@ -381,7 +393,52 @@
   }
 
   // ---------------------------------------------------------------------
-  // Tab 2: Org Chart — the existing company/team/member CRUD UI.
+  // Tab 2: Tasks — read-only view of kanban tasks on boards linked to this
+  // fleet's teams (backend falls back to the default board when none are
+  // linked yet). Status badges reuse the host's existing tone vocabulary.
+  // ---------------------------------------------------------------------
+
+  const TASK_STATUS_META = {
+    triage: { label: "Triage", tone: "secondary" },
+    todo: { label: "To do", tone: "secondary" },
+    scheduled: { label: "Scheduled", tone: "secondary" },
+    ready: { label: "Ready", tone: "outline" },
+    running: { label: "In progress", tone: "warning" },
+    blocked: { label: "Blocked", tone: "destructive" },
+    review: { label: "Review", tone: "outline" },
+    done: { label: "Done", tone: "success" },
+    archived: { label: "Archived", tone: "secondary" },
+  };
+
+  function TaskRow({ task }) {
+    const meta = TASK_STATUS_META[task.status] || { label: task.status, tone: "secondary" };
+    return h("div", { className: "hf-task-row" },
+      h(Badge, { tone: meta.tone, className: "hf-task-status" }, meta.label),
+      h("div", { className: "hf-task-title" }, task.title),
+      task.assignee && h("span", { className: "hf-task-assignee" }, task.assignee),
+      h("span", { className: "hf-task-board" }, task.board)
+    );
+  }
+
+  function TasksTab({ tasks, boards, loading }) {
+    if (loading && tasks.length === 0) {
+      return h("div", { className: "hf-empty" }, "Loading…");
+    }
+    if (tasks.length === 0) {
+      return h(Card, { className: "hf-empty-card" },
+        h(CardContent, null, "No tasks found on " + (boards.length > 1 ? "the linked boards" : "the \"" + (boards[0] || "default") + "\" board") + ".")
+      );
+    }
+    const showBoard = boards.length > 1;
+    return h("div", { className: "hf-tasks" },
+      h("div", { className: cn("hf-task-list", showBoard && "hf-task-list-with-board") },
+        tasks.map(function (t) { return h(TaskRow, { key: t.board + ":" + t.id, task: t }); })
+      )
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Tab 3: Org Chart — the existing company/team/member CRUD UI.
   // ---------------------------------------------------------------------
 
   function OrgChartTab({ companies, profiles, loading, error, load }) {
@@ -401,7 +458,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Tab 3: Hierarchy — a flowchart-style org tree per team. Pure-CSS
+  // Tab 4: Hierarchy — a flowchart-style org tree per team. Pure-CSS
   // nested-list connector lines (no layout math, no chart library) so it
   // stays a plain no-build-step bundle like the rest of this plugin.
   // Each team gets one tree rooted at the team itself (so a team with
@@ -472,19 +529,144 @@
   }
 
   // ---------------------------------------------------------------------
+  // Tab 5: Projects — read/write view of first-class Projects, each showing
+  // whichever fleet team OR whole fleet (company/group) is linked via the
+  // same kanban board_slug. New projects can be assigned to either level.
+  // ---------------------------------------------------------------------
+
+  function assignmentLabel(assignment) {
+    if (!assignment) return null;
+    if (assignment.type === "team") {
+      return assignment.team_name + " · " + assignment.company_name;
+    }
+    return assignment.company_name + " (" + assignment.company_kind + ")";
+  }
+
+  function AddProjectForm({ companies, onDone }) {
+    const [open, setOpen] = useState(false);
+    const [name, setName] = useState("");
+    const [description, setDescription] = useState("");
+    const [companySlug, setCompanySlug] = useState("");
+    const [teamSlug, setTeamSlug] = useState("");
+    const [error, setError] = useState(null);
+
+    if (!open) {
+      return h(Button, { onClick: function () { setOpen(true); } }, "+ Project");
+    }
+
+    const selectedCompany = companies.find(function (c) { return c.slug === companySlug; }) || null;
+    const teamsInFleet = selectedCompany ? selectedCompany.teams : [];
+
+    function submit() {
+      const payload = { name: name, description: description || null };
+      if (companySlug) {
+        payload.target_company_slug = companySlug;
+        if (teamSlug) {
+          payload.target_type = "team";
+          payload.target_team_slug = teamSlug;
+        } else {
+          payload.target_type = "company";
+        }
+      }
+      api("/projects", { method: "POST", body: JSON.stringify(payload) })
+        .then(function () {
+          setOpen(false); setName(""); setDescription(""); setCompanySlug(""); setTeamSlug(""); setError(null);
+          onDone();
+        })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create project" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Name"),
+        h(Input, { value: name, onChange: function (e) { setName(e.target.value); }, autoFocus: true, required: true })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Description"),
+        h("textarea", {
+          className: "hf-textarea",
+          value: description,
+          onChange: function (e) { setDescription(e.target.value); },
+          rows: 4,
+        })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Fleet (company / group / team)"),
+        h(Select, Object.assign(
+          { value: companySlug },
+          selectChangeHandler(function (v) { setCompanySlug(v); setTeamSlug(""); })
+        ),
+          h(SelectOption, { value: "" }, "— Unassigned —"),
+          companies.map(function (c) {
+            return h(SelectOption, { key: c.slug, value: c.slug }, c.name + " (" + c.kind + ")");
+          })
+        )
+      ),
+      selectedCompany && teamsInFleet.length > 0 && h("div", { className: "hf-field" },
+        h(Label, null, "Team within " + selectedCompany.name),
+        h(Select, Object.assign({ value: teamSlug }, selectChangeHandler(setTeamSlug)),
+          h(SelectOption, { value: "" }, "Whole fleet (no specific team)"),
+          teamsInFleet.map(function (t) {
+            return h(SelectOption, { key: t.slug, value: t.slug }, t.name);
+          })
+        )
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function ProjectCard({ project }) {
+    const label = assignmentLabel(project.assignment);
+    return h(Card, { className: "hf-project" },
+      h(CardContent, null,
+        h("div", { className: "hf-project-header" },
+          h("h3", null, project.name),
+          label
+            ? h(Badge, { tone: "outline" }, label)
+            : h(Badge, { tone: "secondary" }, "Unassigned")
+        ),
+        project.description && h("p", { className: "hf-description" }, project.description),
+        project.board_slug && h("div", { className: "hf-project-board" }, "board: " + project.board_slug)
+      )
+    );
+  }
+
+  function ProjectsTab({ projects, loading, companies, onChanged }) {
+    return h("div", { className: "hf-projects-tab" },
+      h("div", { className: "hf-projects-actions" },
+        h(AddProjectForm, { companies: companies, onDone: onChanged })
+      ),
+      loading && projects.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
+      !loading && projects.length === 0 && h(Card, { className: "hf-empty-card" },
+        h(CardContent, null, "No projects yet. Create one above.")
+      ),
+      h("div", { className: "hf-projects" }, projects.map(function (p) {
+        return h(ProjectCard, { key: p.id, project: p });
+      }))
+    );
+  }
+
+  // ---------------------------------------------------------------------
   // Page shell
   // ---------------------------------------------------------------------
 
   const TABS = [
     { id: "dashboard", label: "Dashboard" },
+    { id: "tasks", label: "Tasks" },
     { id: "orgchart", label: "Org Chart" },
     { id: "hierarchy", label: "Hierarchy" },
+    { id: "projects", label: "Projects" },
   ];
 
   function FleetPage() {
     const [companies, setCompanies] = useState([]);
     const [profiles, setProfiles] = useState([]);
+    const [tasks, setTasks] = useState([]);
+    const [taskBoards, setTaskBoards] = useState([]);
+    const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [tasksLoading, setTasksLoading] = useState(true);
+    const [projectsLoading, setProjectsLoading] = useState(true);
     const [error, setError] = useState(null);
     const [tab, setTab] = useState("dashboard");
 
@@ -496,10 +678,37 @@
         .finally(function () { setLoading(false); });
     }, []);
 
+    const loadTasks = useCallback(function () {
+      setTasksLoading(true);
+      api("/tasks")
+        .then(function (payload) {
+          setTasks((payload && payload.tasks) || []);
+          setTaskBoards((payload && payload.boards) || []);
+        })
+        .catch(function () { setTasks([]); setTaskBoards([]); })
+        .finally(function () { setTasksLoading(false); });
+    }, []);
+
+    const loadProjects = useCallback(function () {
+      setProjectsLoading(true);
+      api("/projects")
+        .then(function (payload) { setProjects((payload && payload.projects) || []); })
+        .catch(function () { setProjects([]); })
+        .finally(function () { setProjectsLoading(false); });
+    }, []);
+
     useEffect(function () {
       load();
+      loadTasks();
+      loadProjects();
       api("/profiles").then(function (payload) { setProfiles((payload && payload.profiles) || []); }).catch(function () {});
-    }, [load]);
+    }, [load, loadTasks, loadProjects]);
+
+    function refreshAll() {
+      load();
+      loadTasks();
+      loadProjects();
+    }
 
     return h("div", { className: "hf-page" },
       h("div", { className: "hf-header" },
@@ -509,7 +718,7 @@
           h("p", null, "Companies, teams, and reporting lines across Hermes agent profiles.")
         ),
         h("div", { className: "hf-header-actions" },
-          h(Button, { onClick: load, outlined: true }, "Refresh")
+          h(Button, { onClick: refreshAll, outlined: true }, "Refresh")
         )
       ),
       h(TabsList, null, TABS.map(function (t) {
@@ -520,9 +729,17 @@
           onClick: function () { setTab(t.id); },
         }, t.label);
       })),
-      tab === "dashboard" && h(DashboardTab, { companies: companies, profiles: profiles }),
+      tab === "dashboard" && h(DashboardTab, {
+        companies: companies, profiles: profiles, tasks: tasks,
+        onOpenTasks: function () { setTab("tasks"); },
+      }),
+      tab === "tasks" && h(TasksTab, { tasks: tasks, boards: taskBoards, loading: tasksLoading }),
       tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, loading: loading, error: error, load: load }),
-      tab === "hierarchy" && h(HierarchyTab, { companies: companies })
+      tab === "hierarchy" && h(HierarchyTab, { companies: companies }),
+      tab === "projects" && h(ProjectsTab, {
+        projects: projects, loading: projectsLoading, companies: companies,
+        onChanged: function () { loadProjects(); load(); },
+      })
     );
   }
 

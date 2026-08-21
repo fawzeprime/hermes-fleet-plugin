@@ -66,13 +66,14 @@ def fleet_db_path() -> Path:
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS companies (
-    id          TEXT PRIMARY KEY,
-    slug        TEXT NOT NULL UNIQUE,
-    name        TEXT NOT NULL,
-    description TEXT,
-    kind        TEXT NOT NULL DEFAULT 'company',
-    created_at  INTEGER NOT NULL,
-    archived    INTEGER NOT NULL DEFAULT 0
+    id                TEXT PRIMARY KEY,
+    slug              TEXT NOT NULL UNIQUE,
+    name              TEXT NOT NULL,
+    description       TEXT,
+    kind              TEXT NOT NULL DEFAULT 'company',
+    kanban_board_slug TEXT,
+    created_at        INTEGER NOT NULL,
+    archived          INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS teams (
@@ -106,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_memberships_reports_to ON memberships(reports_to)
 # legacy DB upgrades in place. Each entry is (column_name, full_ddl).
 _OPTIONAL_COMPANY_COLUMNS: tuple[tuple[str, str], ...] = (
     ("kind", "kind TEXT NOT NULL DEFAULT 'company'"),
+    ("kanban_board_slug", "kanban_board_slug TEXT"),
 )
 _OPTIONAL_TEAM_COLUMNS: tuple[tuple[str, str], ...] = ()
 _OPTIONAL_MEMBERSHIP_COLUMNS: tuple[tuple[str, str], ...] = ()
@@ -320,6 +322,7 @@ class Company:
     created_at: int
     description: Optional[str] = None
     kind: str = DEFAULT_COMPANY_KIND
+    kanban_board_slug: Optional[str] = None
     archived: bool = False
     teams: List[Team] = field(default_factory=list)
 
@@ -330,6 +333,7 @@ class Company:
             "name": self.name,
             "description": self.description,
             "kind": self.kind,
+            "kanban_board_slug": self.kanban_board_slug,
             "archived": bool(self.archived),
             "created_at": self.created_at,
             "teams": [t.to_dict() for t in self.teams],
@@ -337,12 +341,14 @@ class Company:
 
 
 def _company_from_row(row: sqlite3.Row) -> Company:
+    keys = row.keys()
     return Company(
         id=row["id"],
         slug=row["slug"],
         name=row["name"],
         description=row["description"],
-        kind=row["kind"] if "kind" in row.keys() else DEFAULT_COMPANY_KIND,
+        kind=row["kind"] if "kind" in keys else DEFAULT_COMPANY_KIND,
+        kanban_board_slug=row["kanban_board_slug"] if "kanban_board_slug" in keys else None,
         archived=bool(row["archived"]),
         created_at=row["created_at"],
     )
@@ -434,6 +440,18 @@ def rename_company(conn: sqlite3.Connection, slug: str, new_name: str) -> None:
         cur = conn.execute("UPDATE companies SET name = ? WHERE slug = ?", (new_name, slug))
         if cur.rowcount == 0:
             raise ValueError(f"unknown company: {slug}")
+
+
+def set_company_board(conn: sqlite3.Connection, slug: str, board_slug: Optional[str]) -> None:
+    """Bind (or clear, with ``board_slug=None``) a company's linked kanban
+    board — the same soft-reference pattern as ``set_team_board``, letting a
+    project be assigned to a whole fleet rather than one specific team."""
+    company = get_company(conn, slug)
+    if company is None:
+        raise ValueError(f"unknown company: {slug}")
+    normalized = normalize_board_slug(board_slug) if board_slug else None
+    with write_txn(conn):
+        conn.execute("UPDATE companies SET kanban_board_slug = ? WHERE id = ?", (normalized, company.id))
 
 
 def delete_company(conn: sqlite3.Connection, slug: str, *, force: bool = False) -> None:
@@ -642,6 +660,35 @@ def remove_member(conn: sqlite3.Connection, company_slug: str, team_slug: str, p
 # ---------------------------------------------------------------------------
 # Org tree
 # ---------------------------------------------------------------------------
+
+
+def list_teams_with_board(conn: sqlite3.Connection) -> List[dict]:
+    """Teams that have a linked kanban board, with their company context.
+
+    Read-only helper for cross-referencing fleet teams against kanban boards
+    and projects_db projects (both live in separate databases — see the
+    module docstring's note on soft references). Plain dicts, not the Team
+    dataclass, since callers just need the board_slug -> team/company lookup.
+    """
+    rows = conn.execute(
+        "SELECT teams.slug AS team_slug, teams.name AS team_name, "
+        "teams.kanban_board_slug AS kanban_board_slug, "
+        "companies.slug AS company_slug, companies.name AS company_name "
+        "FROM teams JOIN companies ON teams.company_id = companies.id "
+        "WHERE teams.kanban_board_slug IS NOT NULL AND teams.archived = 0"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_companies_with_board(conn: sqlite3.Connection) -> List[dict]:
+    """Companies (fleets) that have a linked kanban board directly — i.e. a
+    project can be assigned to the whole fleet, not just one of its teams."""
+    rows = conn.execute(
+        "SELECT slug AS company_slug, name AS company_name, kind AS company_kind, "
+        "kanban_board_slug AS kanban_board_slug "
+        "FROM companies WHERE kanban_board_slug IS NOT NULL AND archived = 0"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def org_tree(conn: sqlite3.Connection, *, company_slug: Optional[str] = None) -> List[Company]:

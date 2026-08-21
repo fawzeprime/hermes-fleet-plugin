@@ -15,7 +15,7 @@
 
   const { React } = SDK;
   const h = React.createElement;
-  const { Card, CardContent, Badge, Button, Input, Label, Select, SelectOption } = SDK.components;
+  const { Card, CardContent, Badge, Button, Input, Label, Select, SelectOption, TabsList, TabsTrigger } = SDK.components;
   const { useState, useEffect, useCallback } = SDK.hooks;
   const { cn } = SDK.utils;
 
@@ -296,11 +296,197 @@
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Tab 1: Dashboard — stats derived from the already-fetched org tree.
+  // No extra API calls; a hero number per metric, a magnitude bar list
+  // (single hue, per dataviz convention for "one measure, many entities"),
+  // and an unassigned-profiles diagnostic chip list.
+  // ---------------------------------------------------------------------
+
+  function computeFleetStats(companies, profiles) {
+    let teamCount = 0;
+    let assignmentCount = 0;
+    const uniqueAgents = new Set();
+    const fleetSizes = [];
+    companies.forEach(function (c) {
+      let agentsInFleet = 0;
+      c.teams.forEach(function (t) {
+        teamCount += 1;
+        assignmentCount += t.members.length;
+        agentsInFleet += t.members.length;
+        t.members.forEach(function (m) { uniqueAgents.add(m.profile); });
+      });
+      fleetSizes.push({ name: c.name, slug: c.slug, count: agentsInFleet });
+    });
+    fleetSizes.sort(function (a, b) { return b.count - a.count; });
+    const unassigned = profiles.filter(function (p) { return !uniqueAgents.has(p); });
+    return {
+      fleetCount: companies.length,
+      teamCount: teamCount,
+      assignmentCount: assignmentCount,
+      uniqueAgentCount: uniqueAgents.size,
+      fleetSizes: fleetSizes,
+      unassigned: unassigned,
+    };
+  }
+
+  function StatTile({ label, value }) {
+    return h(Card, { className: "hf-stat-tile" },
+      h(CardContent, null,
+        h("div", { className: "hf-stat-value" }, value),
+        h("div", { className: "hf-stat-label" }, label)
+      )
+    );
+  }
+
+  function DashboardTab({ companies, profiles }) {
+    const stats = computeFleetStats(companies, profiles);
+    const maxFleetSize = stats.fleetSizes.reduce(function (m, f) { return Math.max(m, f.count); }, 0) || 1;
+
+    return h("div", { className: "hf-dashboard" },
+      h("div", { className: "hf-stats-grid" },
+        h(StatTile, { label: "Fleets", value: stats.fleetCount }),
+        h(StatTile, { label: "Teams", value: stats.teamCount }),
+        h(StatTile, { label: "Agent assignments", value: stats.assignmentCount }),
+        h(StatTile, { label: "Unique agents staffed", value: stats.uniqueAgentCount })
+      ),
+      stats.fleetSizes.length > 0 && h(Card, { className: "hf-dashboard-section" },
+        h(CardContent, null,
+          h("h3", null, "Fleets by agent count"),
+          h("div", { className: "hf-bar-list" }, stats.fleetSizes.map(function (f) {
+            const pct = Math.round((f.count / maxFleetSize) * 100);
+            return h("div", { key: f.slug, className: "hf-bar-row" },
+              h("div", { className: "hf-bar-label" }, f.name),
+              h("div", { className: "hf-bar-track" },
+                h("div", { className: "hf-bar-fill", style: { width: pct + "%" } })
+              ),
+              h("div", { className: "hf-bar-count" }, f.count)
+            );
+          }))
+        )
+      ),
+      stats.unassigned.length > 0 && h(Card, { className: "hf-dashboard-section" },
+        h(CardContent, null,
+          h("h3", null, "Unassigned agent profiles (" + stats.unassigned.length + ")"),
+          h("p", { className: "hf-description" }, "Known Hermes profiles not staffed on any team."),
+          h("div", { className: "hf-chip-row" }, stats.unassigned.map(function (p) {
+            return h(Badge, { key: p, tone: "outline" }, p);
+          }))
+        )
+      ),
+      stats.fleetCount === 0 && h(Card, { className: "hf-empty-card" },
+        h(CardContent, null, "No fleets yet. Switch to the Org Chart tab to create one.")
+      )
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Tab 2: Org Chart — the existing company/team/member CRUD UI.
+  // ---------------------------------------------------------------------
+
+  function OrgChartTab({ companies, profiles, loading, error, load }) {
+    return h("div", { className: "hf-orgchart" },
+      h("div", { className: "hf-orgchart-actions" },
+        h(AddCompanyForm, { onDone: load })
+      ),
+      error && h(Card, { className: "hf-error-card" }, h(CardContent, null, String(error))),
+      loading && companies.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
+      !loading && companies.length === 0 && !error && h(Card, { className: cn("hf-empty-card") },
+        h(CardContent, null, "No companies yet. Create one to get started.")
+      ),
+      h("div", { className: "hf-companies" }, companies.map(function (c) {
+        return h(CompanyCard, { key: c.id, company: c, allProfiles: profiles, onChanged: load });
+      }))
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Tab 3: Hierarchy — a flowchart-style org tree per team. Pure-CSS
+  // nested-list connector lines (no layout math, no chart library) so it
+  // stays a plain no-build-step bundle like the rest of this plugin.
+  // Each team gets one tree rooted at the team itself (so a team with
+  // several unrelated managers still renders as one connected chart);
+  // reporting lines are read from each member's `reports_to`.
+  // ---------------------------------------------------------------------
+
+  function buildReportingForest(team) {
+    const byId = {};
+    team.members.forEach(function (m) { byId[m.id] = Object.assign({}, m, { children: [] }); });
+    const roots = [];
+    team.members.forEach(function (m) {
+      const node = byId[m.id];
+      if (m.reports_to && byId[m.reports_to]) {
+        byId[m.reports_to].children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+    return roots;
+  }
+
+  function TreeNode({ node }) {
+    return h("li", null,
+      h("div", { className: "hf-node" },
+        h("div", { className: "hf-node-name" }, node.profile),
+        node.role && h("div", { className: "hf-node-role" }, node.role)
+      ),
+      node.children.length > 0 && h("ul", null, node.children.map(function (c) {
+        return h(TreeNode, { key: c.id, node: c });
+      }))
+    );
+  }
+
+  function TeamFlowchart({ team }) {
+    const roots = buildReportingForest(team);
+    return h("div", { className: "hf-flowchart" },
+      h("ul", { className: "hf-tree" },
+        h("li", null,
+          h("div", { className: "hf-node hf-node-team" }, team.name),
+          roots.length > 0
+            ? h("ul", null, roots.map(function (r) { return h(TreeNode, { key: r.id, node: r }); }))
+            : h("ul", null, h("li", null, h("div", { className: "hf-node hf-node-empty" }, "No agents yet")))
+        )
+      )
+    );
+  }
+
+  function HierarchyTab({ companies }) {
+    const hasAnyTeams = companies.some(function (c) { return c.teams.length > 0; });
+    if (!hasAnyTeams) {
+      return h(Card, { className: "hf-empty-card" },
+        h(CardContent, null, "No teams yet. Create a fleet and a team in the Org Chart tab to see the hierarchy.")
+      );
+    }
+    return h("div", { className: "hf-hierarchy" }, companies.map(function (c) {
+      if (c.teams.length === 0) return null;
+      return h("div", { key: c.id, className: "hf-hierarchy-company" },
+        h("h2", null, c.name),
+        c.teams.map(function (t) {
+          return h("div", { key: t.id, className: "hf-hierarchy-team" },
+            h("h3", null, t.name),
+            h(TeamFlowchart, { team: t })
+          );
+        })
+      );
+    }));
+  }
+
+  // ---------------------------------------------------------------------
+  // Page shell
+  // ---------------------------------------------------------------------
+
+  const TABS = [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "orgchart", label: "Org Chart" },
+    { id: "hierarchy", label: "Hierarchy" },
+  ];
+
   function FleetPage() {
     const [companies, setCompanies] = useState([]);
     const [profiles, setProfiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [tab, setTab] = useState("dashboard");
 
     const load = useCallback(function () {
       setLoading(true);
@@ -323,18 +509,20 @@
           h("p", null, "Companies, teams, and reporting lines across Hermes agent profiles.")
         ),
         h("div", { className: "hf-header-actions" },
-          h(Button, { onClick: load, outlined: true }, "Refresh"),
-          h(AddCompanyForm, { onDone: load })
+          h(Button, { onClick: load, outlined: true }, "Refresh")
         )
       ),
-      error && h(Card, { className: "hf-error-card" }, h(CardContent, null, String(error))),
-      loading && companies.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
-      !loading && companies.length === 0 && !error && h(Card, { className: cn("hf-empty-card") },
-        h(CardContent, null, "No companies yet. Create one to get started.")
-      ),
-      h("div", { className: "hf-companies" }, companies.map(function (c) {
-        return h(CompanyCard, { key: c.id, company: c, allProfiles: profiles, onChanged: load });
-      }))
+      h(TabsList, null, TABS.map(function (t) {
+        return h(TabsTrigger, {
+          key: t.id,
+          value: t.id,
+          active: tab === t.id,
+          onClick: function () { setTab(t.id); },
+        }, t.label);
+      })),
+      tab === "dashboard" && h(DashboardTab, { companies: companies, profiles: profiles }),
+      tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, loading: loading, error: error, load: load }),
+      tab === "hierarchy" && h(HierarchyTab, { companies: companies })
     );
   }
 

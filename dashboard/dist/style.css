@@ -136,16 +136,67 @@
   max-width: 420px;
 }
 
-.hf-team-project {
+.hf-team-board {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.hf-team-project-label {
+.hf-team-board-slug {
+  font-family: monospace;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.hf-team-board-editing {
+  max-width: 320px;
+}
+
+.hf-team-projects {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.hf-team-projects-label {
   font-size: 0.8rem;
   opacity: 0.7;
   white-space: nowrap;
+}
+
+.hf-team-projects-list {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hf-team-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.hf-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.hf-chip-remove:hover {
+  opacity: 1;
+  color: var(--destructive, #fb2c36);
+}
+
+.hf-team-projects-select {
+  max-width: 200px;
 }
 
 .hf-members {

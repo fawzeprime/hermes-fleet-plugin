@@ -258,34 +258,111 @@
     );
   }
 
-  function TeamProjectLink({ team, companySlug, projects, onChanged }) {
-    const linkedProject = projects.find(function (p) {
-      return p.board_slug && p.board_slug === team.kanban_board_slug;
-    }) || null;
+  // Direct board assignment — was previously only reachable indirectly by
+  // linking a project (which rebinds the team's board to match). This is
+  // the explicit "assign a kanban board to this team" control; free-text +
+  // datalist (not a hard Select) so a not-yet-created board can still be
+  // pre-assigned, matching the soft-reference convention used everywhere
+  // else in this plugin.
+  function TeamBoardControl({ team, companySlug, boards, onChanged }) {
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(team.kanban_board_slug || "");
+    const [error, setError] = useState(null);
 
-    function handleChange(projectId) {
-      const body = projectId ? { link_project_id: projectId } : { unlink_project: true };
+    if (!editing) {
+      return h("div", { className: "hf-team-board" },
+        h("span", { className: team.kanban_board_slug ? "hf-team-board-slug" : "hf-empty" },
+          team.kanban_board_slug ? "board: " + team.kanban_board_slug : "No kanban board assigned."),
+        h(Button, {
+          ghost: true,
+          onClick: function () { setValue(team.kanban_board_slug || ""); setEditing(true); },
+        }, team.kanban_board_slug ? "Change" : "Assign board")
+      );
+    }
+
+    function save() {
+      const body = value.trim() ? { kanban_board_slug: value.trim() } : { clear_board: true };
       api("/teams/" + encodeURIComponent(team.slug) + "?company=" + encodeURIComponent(companySlug), {
         method: "PATCH",
         body: JSON.stringify(body),
+      })
+        .then(function (res) {
+          setEditing(false); setError(null);
+          if (res && res.warning) window.alert(res.warning);
+          onChanged();
+        })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h("div", { className: "hf-team-board hf-team-board-editing" },
+      h(Input, {
+        value: value, onChange: function (e) { setValue(e.target.value); },
+        list: "hf-board-options", placeholder: "board slug", autoFocus: true,
+      }),
+      h("datalist", { id: "hf-board-options" }, boards.map(function (b) {
+        return h("option", { key: b.slug, value: b.slug }, b.name);
+      })),
+      h(Button, { onClick: save }, "Save"),
+      h(Button, { ghost: true, onClick: function () { setEditing(false); setError(null); } }, "Cancel"),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  // Many-to-one project assignment: several projects can share one team's
+  // board. Assigning auto-provisions a board on the team the first time
+  // (never rebinds an existing one); unassigning only clears that project's
+  // own board_slug, leaving the team and any other assigned projects intact.
+  function TeamProjectsControl({ team, companySlug, projects, onChanged }) {
+    const assigned = projects.filter(function (p) {
+      return team.kanban_board_slug && p.board_slug === team.kanban_board_slug;
+    });
+    const assignable = projects.filter(function (p) {
+      return !(team.kanban_board_slug && p.board_slug === team.kanban_board_slug);
+    });
+
+    function assign(projectId) {
+      if (!projectId) return;
+      api("/teams/" + encodeURIComponent(team.slug) + "/projects?company=" + encodeURIComponent(companySlug), {
+        method: "POST",
+        body: JSON.stringify({ project_id: projectId }),
       }).then(onChanged).catch(function (err) { window.alert(String(err)); });
     }
 
-    return h("div", { className: "hf-team-project" },
-      h(Label, { className: "hf-team-project-label" }, "Project"),
-      h(Select, Object.assign(
-        { value: linkedProject ? linkedProject.id : "" },
-        selectChangeHandler(handleChange)
+    function unassign(projectId) {
+      api(
+        "/teams/" + encodeURIComponent(team.slug) + "/projects/" + encodeURIComponent(projectId) +
+          "?company=" + encodeURIComponent(companySlug),
+        { method: "DELETE" }
+      ).then(onChanged).catch(function (err) { window.alert(String(err)); });
+    }
+
+    return h("div", { className: "hf-team-projects" },
+      h("div", { className: "hf-team-projects-label" }, "Projects"),
+      h("div", { className: "hf-team-projects-list" },
+        assigned.length === 0 && h("span", { className: "hf-empty" }, "No projects assigned."),
+        assigned.map(function (p) {
+          return h(Badge, { key: p.id, tone: "outline", className: "hf-team-project-chip" },
+            p.name,
+            h("button", {
+              type: "button", className: "hf-chip-remove",
+              onClick: function () { unassign(p.id); },
+            }, "×")
+          );
+        })
       ),
-        h(SelectOption, { value: "" }, "— No linked project —"),
-        projects.map(function (p) {
+      assignable.length > 0 && h(Select, Object.assign(
+        { value: "", className: "hf-team-projects-select" },
+        selectChangeHandler(assign)
+      ),
+        h(SelectOption, { value: "" }, "+ Assign project…"),
+        assignable.map(function (p) {
           return h(SelectOption, { key: p.id, value: p.id }, p.name);
         })
       )
     );
   }
 
-  function TeamCard({ team, companySlug, allProfiles, projects, onChanged }) {
+  function TeamCard({ team, companySlug, allProfiles, projects, boards, onChanged }) {
     const managers = managerLookup(team.members);
     const existingProfiles = team.members.map(function (m) { return m.profile; });
     function deleteTeam() {
@@ -303,14 +380,14 @@
       h(CardContent, null,
         h("div", { className: "hf-team-header" },
           h("strong", null, team.name),
-          team.kanban_board_slug && h(Badge, { tone: "outline" }, "board: " + team.kanban_board_slug),
           h(Button, { ghost: true, destructive: true, className: "hf-delete-team-btn", onClick: deleteTeam }, "Delete")
         ),
         team.description && h("p", { className: "hf-description" }, team.description),
         h("div", { className: "hf-team-meta" },
           h(TeamWorkspaceControl, { team: team, companySlug: companySlug, onChanged: onChanged }),
-          h(TeamProjectLink, { team: team, companySlug: companySlug, projects: projects, onChanged: onChanged })
+          h(TeamBoardControl, { team: team, companySlug: companySlug, boards: boards, onChanged: onChanged })
         ),
+        h(TeamProjectsControl, { team: team, companySlug: companySlug, projects: projects, onChanged: onChanged }),
         h("div", { className: "hf-members" },
           team.members.length === 0 && h("div", { className: "hf-empty" }, "No agents on this team yet."),
           team.members.map(function (m) {
@@ -328,7 +405,7 @@
     );
   }
 
-  function CompanyCard({ company, allProfiles, projects, onChanged }) {
+  function CompanyCard({ company, allProfiles, projects, boards, onChanged }) {
     function deleteCompany() {
       const teamCount = company.teams.length;
       const memberCount = company.teams.reduce(function (n, t) { return n + t.members.length; }, 0);
@@ -357,7 +434,7 @@
         h("div", { className: "hf-teams" },
           company.teams.length === 0 && h("div", { className: "hf-empty" }, "No teams yet."),
           company.teams.map(function (t) {
-            return h(TeamCard, { key: t.id, team: t, companySlug: company.slug, allProfiles: allProfiles, projects: projects, onChanged: onChanged });
+            return h(TeamCard, { key: t.id, team: t, companySlug: company.slug, allProfiles: allProfiles, projects: projects, boards: boards, onChanged: onChanged });
           })
         )
       )
@@ -509,7 +586,7 @@
   // Tab 3: Org Chart — the existing company/team/member CRUD UI.
   // ---------------------------------------------------------------------
 
-  function OrgChartTab({ companies, profiles, projects, loading, error, load }) {
+  function OrgChartTab({ companies, profiles, projects, boards, loading, error, load }) {
     return h("div", { className: "hf-orgchart" },
       h("div", { className: "hf-orgchart-actions" },
         h(AddCompanyForm, { onDone: load })
@@ -520,7 +597,7 @@
         h(CardContent, null, "No companies yet. Create one to get started.")
       ),
       h("div", { className: "hf-companies" }, companies.map(function (c) {
-        return h(CompanyCard, { key: c.id, company: c, allProfiles: profiles, projects: projects, onChanged: load });
+        return h(CompanyCard, { key: c.id, company: c, allProfiles: profiles, projects: projects, boards: boards, onChanged: load });
       }))
     );
   }
@@ -732,6 +809,7 @@
     const [tasks, setTasks] = useState([]);
     const [taskBoards, setTaskBoards] = useState([]);
     const [projects, setProjects] = useState([]);
+    const [kanbanBoards, setKanbanBoards] = useState([]);
     const [loading, setLoading] = useState(true);
     const [tasksLoading, setTasksLoading] = useState(true);
     const [projectsLoading, setProjectsLoading] = useState(true);
@@ -770,6 +848,7 @@
       loadTasks();
       loadProjects();
       api("/profiles").then(function (payload) { setProfiles((payload && payload.profiles) || []); }).catch(function () {});
+      api("/boards").then(function (payload) { setKanbanBoards((payload && payload.boards) || []); }).catch(function () {});
     }, [load, loadTasks, loadProjects]);
 
     function refreshAll() {
@@ -802,7 +881,7 @@
         onOpenTasks: function () { setTab("tasks"); },
       }),
       tab === "tasks" && h(TasksTab, { tasks: tasks, boards: taskBoards, loading: tasksLoading }),
-      tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, projects: projects, loading: loading, error: error, load: load }),
+      tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, projects: projects, boards: kanbanBoards, loading: loading, error: error, load: load }),
       tab === "hierarchy" && h(HierarchyTab, { companies: companies }),
       tab === "projects" && h(ProjectsTab, {
         projects: projects, loading: projectsLoading, companies: companies,

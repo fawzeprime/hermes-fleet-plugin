@@ -119,6 +119,18 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     t_unlink_project.add_argument("team_slug")
     t_unlink_project.add_argument("--company", required=True)
 
+    t_assign_project = team_sub.add_parser(
+        "assign-project", help="Attach an additional project to a team's board (many-to-one)"
+    )
+    t_assign_project.add_argument("team_slug")
+    t_assign_project.add_argument("--company", required=True)
+    t_assign_project.add_argument("project", help="Project id or slug")
+
+    t_unassign_project = team_sub.add_parser("unassign-project", help="Detach a project from a team's board")
+    t_unassign_project.add_argument("team_slug")
+    t_unassign_project.add_argument("--company", required=True)
+    t_unassign_project.add_argument("project", help="Project id or slug")
+
     # -- org ------------------------------------------------------------------
     p_org = subs.add_parser("org", help="Print the full company -> team -> member tree")
     p_org.add_argument("--company", default=None)
@@ -176,7 +188,8 @@ def _dispatch_team(args: argparse.Namespace) -> int:
         print(
             "Usage: hermes fleet team "
             "{create|list|show|rename|delete|add-member|remove-member|members|"
-            "link-board|unlink-board|set-workspace|unset-workspace|link-project|unlink-project}"
+            "link-board|unlink-board|set-workspace|unset-workspace|link-project|unlink-project|"
+            "assign-project|unassign-project}"
         )
         return 2
     handlers = {
@@ -194,6 +207,8 @@ def _dispatch_team(args: argparse.Namespace) -> int:
         "unset-workspace": _cmd_team_unset_workspace,
         "link-project": _cmd_team_link_project,
         "unlink-project": _cmd_team_unlink_project,
+        "assign-project": _cmd_team_assign_project,
+        "unassign-project": _cmd_team_unassign_project,
     }
     handler = handlers.get(action)
     if handler is None:
@@ -478,6 +493,49 @@ def _cmd_team_unlink_project(args: argparse.Namespace) -> None:
     with fleet_db.connect_closing() as conn:
         fleet_db.set_team_board(conn, args.company, args.team_slug, None)
     print(f"Unlinked project from {args.team_slug!r}")
+
+
+def _cmd_team_assign_project(args: argparse.Namespace) -> None:
+    """Attach an additional project to a team's board — unlike link-project,
+    never rebinds the team's own board, so several projects can be assigned
+    to the same team over time."""
+    with fleet_db.connect_closing() as conn:
+        team = fleet_db.get_team(conn, args.company, args.team_slug)
+        if team is None:
+            print(f"Unknown team: {args.team_slug} in {args.company}")
+            return
+        board_slug = team.kanban_board_slug
+        if not board_slug:
+            board_slug = f"team-{args.team_slug}"
+            fleet_db.set_team_board(conn, args.company, args.team_slug, board_slug)
+
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        print("Error: projects_db is unavailable.")
+        return
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, args.project)
+        if project is None:
+            print(f"Unknown project: {args.project}")
+            return
+        projects_db.update_project(pconn, project.id, board_slug=board_slug)
+    print(f"Assigned project {project.slug!r} to {args.team_slug!r} (board {board_slug!r})")
+
+
+def _cmd_team_unassign_project(args: argparse.Namespace) -> None:
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        print("Error: projects_db is unavailable.")
+        return
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, args.project)
+        if project is None:
+            print(f"Unknown project: {args.project}")
+            return
+        projects_db.update_project(pconn, project.id, board_slug="")
+    print(f"Unassigned project {project.slug!r}")
 
 
 # ---------------------------------------------------------------------------

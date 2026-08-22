@@ -585,3 +585,82 @@ def create_fleet_project(payload: CreateProjectBody):
             raise HTTPException(status_code=400, detail=str(exc))
 
     return {"project_id": project_id, "board_slug": board_slug}
+
+
+# ---------------------------------------------------------------------------
+# Kanban boards — read-only proxy so the "assign a board" control can offer
+# real board slugs instead of free text. Direct board assignment already had
+# full CRUD via UpdateTeamBody.kanban_board_slug; this only adds discovery.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/boards")
+def list_kanban_boards():
+    try:
+        from hermes_cli import kanban_db
+    except ImportError:
+        return {"boards": []}
+    try:
+        boards = kanban_db.list_boards(include_archived=False)
+    except Exception:
+        return {"boards": []}
+    return {"boards": [{"slug": b.get("slug"), "name": b.get("name") or b.get("slug")} for b in boards]}
+
+
+# ---------------------------------------------------------------------------
+# Team <-> project assignment (many-to-one: several projects can share one
+# team's board). Distinct from UpdateTeamBody.link_project_id, which instead
+# *rebinds the team's own board* to match one chosen project — that's a
+# single exclusive link; this is additive and never touches the team's board
+# beyond auto-provisioning one the first time if it has none.
+# ---------------------------------------------------------------------------
+
+
+class AssignProjectBody(BaseModel):
+    project_id: str
+
+
+@router.post("/teams/{team_slug}/projects")
+def assign_project_to_team(team_slug: str, payload: AssignProjectBody, company: str = Query(...)):
+    conn = _conn()
+    try:
+        team = fleet_db.get_team(conn, company, team_slug)
+        if team is None:
+            raise HTTPException(status_code=400, detail=f"unknown team: {team_slug}")
+        board_slug = team.kanban_board_slug
+        if not board_slug:
+            board_slug = f"team-{team_slug}"
+            fleet_db.set_team_board(conn, company, team_slug, board_slug)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        conn.close()
+
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        raise HTTPException(status_code=503, detail="projects_db unavailable")
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, payload.project_id)
+        if project is None:
+            raise HTTPException(status_code=400, detail=f"unknown project: {payload.project_id}")
+        projects_db.update_project(pconn, project.id, board_slug=board_slug)
+    return {"ok": True, "board_slug": board_slug}
+
+
+@router.delete("/teams/{team_slug}/projects/{project_id}")
+def unassign_project_from_team(team_slug: str, project_id: str, company: str = Query(...)):
+    # company/team_slug are for URL symmetry with the other team-scoped
+    # routes; unassignment just clears whatever board the project currently
+    # has, regardless of which team it matched — a project only ever
+    # belongs to one board at a time, so there's nothing else to disambiguate.
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        raise HTTPException(status_code=503, detail="projects_db unavailable")
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, project_id)
+        if project is None:
+            raise HTTPException(status_code=400, detail=f"unknown project: {project_id}")
+        projects_db.update_project(pconn, project.id, board_slug="")
+    return {"ok": True}

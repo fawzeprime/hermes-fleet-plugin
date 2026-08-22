@@ -384,9 +384,10 @@ def list_profiles():
 # ---------------------------------------------------------------------------
 # Tasks — read-only proxy into hermes_cli.kanban_db (a separate root-anchored
 # store; see db.py's module docstring). Scoped to boards actually linked to a
-# fleet team via team.kanban_board_slug, falling back to the default board
-# when no team has one linked yet, so this stays "this fleet's tasks" rather
-# than every task on every board on the machine.
+# fleet team/company OR a project (tasks are shown nested under their
+# project in the dashboard, so a project-only board must be included even
+# when no team/company points at it), falling back to the default board
+# when nothing is linked yet.
 # ---------------------------------------------------------------------------
 
 _TASK_STATUS_SORT_ORDER = {
@@ -409,6 +410,15 @@ def _fleet_board_slugs() -> list[str]:
         slugs |= {row["kanban_board_slug"] for row in fleet_db.list_companies_with_board(conn)}
     finally:
         conn.close()
+    try:
+        from hermes_cli import projects_db
+
+        with projects_db.connect_closing() as pconn:
+            slugs |= {
+                p.board_slug for p in projects_db.list_projects(pconn, include_archived=False) if p.board_slug
+            }
+    except ImportError:
+        pass
     if not slugs:
         try:
             from hermes_cli import kanban_db
@@ -452,6 +462,40 @@ def list_fleet_tasks():
     ))
     blocked_count = sum(1 for t in tasks if t["status"] == "blocked")
     return {"tasks": tasks, "boards": boards, "blocked_count": blocked_count}
+
+
+class CreateTaskBody(BaseModel):
+    title: str
+    body: Optional[str] = None
+    assignee: Optional[str] = None
+    project_id: str
+
+
+@router.post("/tasks")
+def create_fleet_task(payload: CreateTaskBody):
+    try:
+        from hermes_cli import kanban_db, projects_db
+    except ImportError:
+        raise HTTPException(status_code=503, detail="kanban_db/projects_db unavailable")
+
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, payload.project_id)
+        if project is None:
+            raise HTTPException(status_code=400, detail=f"unknown project: {payload.project_id}")
+        board_slug = project.board_slug
+        if not board_slug:
+            board_slug = f"project-{project.slug}"
+            projects_db.update_project(pconn, project.id, board_slug=board_slug)
+
+    with kanban_db.connect_closing(board=board_slug) as kconn:
+        task_id = kanban_db.create_task(
+            kconn,
+            title=payload.title,
+            body=payload.body,
+            assignee=payload.assignee or None,
+            created_by="hermes-fleet",
+        )
+    return {"task_id": task_id, "board_slug": board_slug}
 
 
 # ---------------------------------------------------------------------------

@@ -490,7 +490,7 @@
     );
   }
 
-  function DashboardTab({ companies, profiles, tasks, onOpenTasks }) {
+  function DashboardTab({ companies, profiles, tasks, onOpenOrgChart, onOpenProjects }) {
     const stats = computeFleetStats(companies, profiles, tasks);
     const maxFleetSize = stats.fleetSizes.reduce(function (m, f) { return Math.max(m, f.count); }, 0) || 1;
 
@@ -498,13 +498,13 @@
       h("div", { className: "hf-stats-grid" },
         h(StatTile, { label: "Fleets", value: stats.fleetCount }),
         h(StatTile, { label: "Teams", value: stats.teamCount }),
-        h(StatTile, { label: "Agent assignments", value: stats.assignmentCount, onClick: onOpenTasks }),
+        h(StatTile, { label: "Agent assignments", value: stats.assignmentCount, onClick: onOpenOrgChart }),
         h(StatTile, { label: "Unique agents staffed", value: stats.uniqueAgentCount }),
         h(StatTile, {
           label: "Blocked tasks",
           value: stats.blockedTaskCount,
           tone: stats.blockedTaskCount > 0 ? "destructive" : "success",
-          onClick: onOpenTasks,
+          onClick: onOpenProjects,
         })
       ),
       stats.fleetSizes.length > 0 && h(Card, { className: "hf-dashboard-section" },
@@ -538,9 +538,9 @@
   }
 
   // ---------------------------------------------------------------------
-  // Tab 2: Tasks — read-only view of kanban tasks on boards linked to this
-  // fleet's teams (backend falls back to the default board when none are
-  // linked yet). Status badges reuse the host's existing tone vocabulary.
+  // Tasks — read-only rows nested under their project in the Projects tab
+  // (there's no standalone Tasks tab; tasks are shown per-project). Status
+  // badges reuse the host's existing tone vocabulary.
   // ---------------------------------------------------------------------
 
   const TASK_STATUS_META = {
@@ -560,30 +560,12 @@
     return h("div", { className: "hf-task-row" },
       h(Badge, { tone: meta.tone, className: "hf-task-status" }, meta.label),
       h("div", { className: "hf-task-title" }, task.title),
-      task.assignee && h("span", { className: "hf-task-assignee" }, task.assignee),
-      h("span", { className: "hf-task-board" }, task.board)
-    );
-  }
-
-  function TasksTab({ tasks, boards, loading }) {
-    if (loading && tasks.length === 0) {
-      return h("div", { className: "hf-empty" }, "Loading…");
-    }
-    if (tasks.length === 0) {
-      return h(Card, { className: "hf-empty-card" },
-        h(CardContent, null, "No tasks found on " + (boards.length > 1 ? "the linked boards" : "the \"" + (boards[0] || "default") + "\" board") + ".")
-      );
-    }
-    const showBoard = boards.length > 1;
-    return h("div", { className: "hf-tasks" },
-      h("div", { className: cn("hf-task-list", showBoard && "hf-task-list-with-board") },
-        tasks.map(function (t) { return h(TaskRow, { key: t.board + ":" + t.id, task: t }); })
-      )
+      task.assignee && h("span", { className: "hf-task-assignee" }, task.assignee)
     );
   }
 
   // ---------------------------------------------------------------------
-  // Tab 3: Org Chart — the existing company/team/member CRUD UI.
+  // Tab 2: Org Chart — the existing company/team/member CRUD UI.
   // ---------------------------------------------------------------------
 
   function OrgChartTab({ companies, profiles, projects, boards, loading, error, load }) {
@@ -603,7 +585,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Tab 4: Hierarchy — a flowchart-style org tree per team. Pure-CSS
+  // Tab 3: Hierarchy — a flowchart-style org tree per team. Pure-CSS
   // nested-list connector lines (no layout math, no chart library) so it
   // stays a plain no-build-step bundle like the rest of this plugin.
   // Each team gets one tree rooted at the team itself (so a team with
@@ -674,7 +656,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Tab 5: Projects — read/write view of first-class Projects, each showing
+  // Tab 4: Projects — read/write view of first-class Projects, each showing
   // whichever fleet team OR whole fleet (company/group) is linked via the
   // same kanban board_slug. New projects can be assigned to either level.
   // ---------------------------------------------------------------------
@@ -760,8 +742,65 @@
     );
   }
 
-  function ProjectCard({ project }) {
+  function AddTaskForm({ projects, onDone }) {
+    const [open, setOpen] = useState(false);
+    const [title, setTitle] = useState("");
+    const [body, setBody] = useState("");
+    const [projectId, setProjectId] = useState("");
+    const [assignee, setAssignee] = useState("");
+    const [error, setError] = useState(null);
+
+    if (!open) {
+      return h(Button, { onClick: function () { setOpen(true); } }, "+ Task");
+    }
+
+    function submit() {
+      if (!projectId) { setError("Pick a project"); return; }
+      api("/tasks", {
+        method: "POST",
+        body: JSON.stringify({ title: title, body: body || null, assignee: assignee || null, project_id: projectId }),
+      })
+        .then(function () {
+          setOpen(false); setTitle(""); setBody(""); setProjectId(""); setAssignee(""); setError(null);
+          onDone();
+        })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setOpen(false); setError(null); }, onSubmit: submit, submitLabel: "Create task" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Title"),
+        h(Input, { value: title, onChange: function (e) { setTitle(e.target.value); }, autoFocus: true, required: true })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Project"),
+        h(Select, Object.assign({ value: projectId }, selectChangeHandler(setProjectId)),
+          h(SelectOption, { value: "" }, "— Pick a project —"),
+          projects.map(function (p) {
+            return h(SelectOption, { key: p.id, value: p.id }, p.name);
+          })
+        )
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Assignee (optional)"),
+        h(Input, { value: assignee, onChange: function (e) { setAssignee(e.target.value); }, placeholder: "e.g. seer" })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Description"),
+        h("textarea", {
+          className: "hf-textarea", value: body,
+          onChange: function (e) { setBody(e.target.value); }, rows: 3,
+        })
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function ProjectCard({ project, tasks }) {
     const label = assignmentLabel(project.assignment);
+    const projectTasks = tasks.filter(function (t) {
+      return project.board_slug && t.board === project.board_slug;
+    });
     return h(Card, { className: "hf-project" },
       h(CardContent, null,
         h("div", { className: "hf-project-header" },
@@ -771,22 +810,29 @@
             : h(Badge, { tone: "secondary" }, "Unassigned")
         ),
         project.description && h("p", { className: "hf-description" }, project.description),
-        project.board_slug && h("div", { className: "hf-project-board" }, "board: " + project.board_slug)
+        project.board_slug && h("div", { className: "hf-project-board" }, "board: " + project.board_slug),
+        h("div", { className: "hf-project-tasks" },
+          h("div", { className: "hf-project-tasks-label" }, "Tasks"),
+          projectTasks.length === 0
+            ? h("div", { className: "hf-empty" }, "No tasks yet.")
+            : projectTasks.map(function (t) { return h(TaskRow, { key: t.id, task: t }); })
+        )
       )
     );
   }
 
-  function ProjectsTab({ projects, loading, companies, onChanged }) {
+  function ProjectsTab({ projects, tasks, loading, companies, onChanged }) {
     return h("div", { className: "hf-projects-tab" },
       h("div", { className: "hf-projects-actions" },
-        h(AddProjectForm, { companies: companies, onDone: onChanged })
+        h(AddProjectForm, { companies: companies, onDone: onChanged }),
+        h(AddTaskForm, { projects: projects, onDone: onChanged })
       ),
       loading && projects.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
       !loading && projects.length === 0 && h(Card, { className: "hf-empty-card" },
         h(CardContent, null, "No projects yet. Create one above.")
       ),
       h("div", { className: "hf-projects" }, projects.map(function (p) {
-        return h(ProjectCard, { key: p.id, project: p });
+        return h(ProjectCard, { key: p.id, project: p, tasks: tasks });
       }))
     );
   }
@@ -797,7 +843,6 @@
 
   const TABS = [
     { id: "dashboard", label: "Dashboard" },
-    { id: "tasks", label: "Tasks" },
     { id: "orgchart", label: "Org Chart" },
     { id: "hierarchy", label: "Hierarchy" },
     { id: "projects", label: "Projects" },
@@ -807,7 +852,6 @@
     const [companies, setCompanies] = useState([]);
     const [profiles, setProfiles] = useState([]);
     const [tasks, setTasks] = useState([]);
-    const [taskBoards, setTaskBoards] = useState([]);
     const [projects, setProjects] = useState([]);
     const [kanbanBoards, setKanbanBoards] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -827,11 +871,8 @@
     const loadTasks = useCallback(function () {
       setTasksLoading(true);
       api("/tasks")
-        .then(function (payload) {
-          setTasks((payload && payload.tasks) || []);
-          setTaskBoards((payload && payload.boards) || []);
-        })
-        .catch(function () { setTasks([]); setTaskBoards([]); })
+        .then(function (payload) { setTasks((payload && payload.tasks) || []); })
+        .catch(function () { setTasks([]); })
         .finally(function () { setTasksLoading(false); });
     }, []);
 
@@ -878,14 +919,14 @@
       })),
       tab === "dashboard" && h(DashboardTab, {
         companies: companies, profiles: profiles, tasks: tasks,
-        onOpenTasks: function () { setTab("tasks"); },
+        onOpenOrgChart: function () { setTab("orgchart"); },
+        onOpenProjects: function () { setTab("projects"); },
       }),
-      tab === "tasks" && h(TasksTab, { tasks: tasks, boards: taskBoards, loading: tasksLoading }),
       tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, projects: projects, boards: kanbanBoards, loading: loading, error: error, load: load }),
       tab === "hierarchy" && h(HierarchyTab, { companies: companies }),
       tab === "projects" && h(ProjectsTab, {
-        projects: projects, loading: projectsLoading, companies: companies,
-        onChanged: function () { loadProjects(); load(); },
+        projects: projects, tasks: tasks, loading: projectsLoading || tasksLoading, companies: companies,
+        onChanged: function () { loadProjects(); loadTasks(); load(); },
       })
     );
   }

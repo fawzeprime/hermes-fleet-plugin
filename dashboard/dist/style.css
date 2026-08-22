@@ -367,14 +367,8 @@
 }
 
 /* ---------------------------------------------------------------------
- * Tab 2: Tasks
+ * Tasks — nested under their project (no standalone Tasks tab)
  * ------------------------------------------------------------------- */
-
-.hf-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
 
 .hf-task-row {
   display: flex;
@@ -404,18 +398,8 @@
   background: rgba(127, 127, 127, 0.12);
 }
 
-.hf-task-board {
-  font-size: 0.72rem;
-  opacity: 0.5;
-  display: none;
-}
-
-.hf-task-list-with-board .hf-task-board {
-  display: inline;
-}
-
 /* ---------------------------------------------------------------------
- * Tab 3: Org Chart
+ * Tab 2: Org Chart
  * ------------------------------------------------------------------- */
 
 .hf-orgchart {
@@ -429,7 +413,7 @@
 }
 
 /* ---------------------------------------------------------------------
- * Tab 4: Hierarchy — classic pure-CSS nested-list org chart. Each <li>
+ * Tab 3: Hierarchy — classic pure-CSS nested-list org chart. Each <li>
  * draws its own top-connector via ::before/::after; a <ul> draws the
  * vertical drop to its own children via ::before. No layout math.
  * ------------------------------------------------------------------- */
@@ -562,7 +546,7 @@
 }
 
 /* ---------------------------------------------------------------------
- * Tab 5: Projects
+ * Tab 4: Projects — includes each project's tasks (no standalone Tasks tab)
  * ------------------------------------------------------------------- */
 
 .hf-projects-tab {
@@ -573,6 +557,8 @@
 
 .hf-projects-actions {
   display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .hf-projects {
@@ -597,4 +583,21 @@
   font-size: 0.72rem;
   opacity: 0.5;
   margin-top: 0.4rem;
+}
+
+.hf-project-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.15);
+}
+
+.hf-project-tasks-label {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.15rem;
 }

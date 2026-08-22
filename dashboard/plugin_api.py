@@ -191,6 +191,13 @@ class UpdateTeamBody(BaseModel):
     name: Optional[str] = None
     kanban_board_slug: Optional[str] = None
     clear_board: bool = False
+    workspace_path: Optional[str] = None
+    clear_workspace: bool = False
+    # Link this team's tasks to an existing project: resolves the project's
+    # board_slug (auto-provisioning one on the project the first time, same
+    # convention as POST /projects) and binds it as this team's board.
+    link_project_id: Optional[str] = None
+    unlink_project: bool = False
 
 
 @router.get("/teams")
@@ -240,11 +247,22 @@ def update_team(team_slug: str, payload: UpdateTeamBody, company: str = Query(..
     try:
         if payload.name:
             fleet_db.rename_team(conn, company, team_slug, payload.name)
-        if payload.clear_board:
+        if payload.clear_workspace:
+            fleet_db.set_team_workspace(conn, company, team_slug, None)
+        elif payload.workspace_path:
+            fleet_db.set_team_workspace(conn, company, team_slug, payload.workspace_path)
+
+        if payload.unlink_project:
+            fleet_db.set_team_board(conn, company, team_slug, None)
+        elif payload.link_project_id:
+            board_slug = _link_team_to_project(conn, company, team_slug, payload.link_project_id)
+            fleet_db.set_team_board(conn, company, team_slug, board_slug)
+        elif payload.clear_board:
             fleet_db.set_team_board(conn, company, team_slug, None)
         elif payload.kanban_board_slug:
             warning = _resolve_board_warning(payload.kanban_board_slug)
             fleet_db.set_team_board(conn, company, team_slug, payload.kanban_board_slug)
+
         team = fleet_db.get_team(conn, company, team_slug, with_members=True)
         body: dict[str, Any] = {"team": team.to_dict() if team else None}
         if warning:
@@ -254,6 +272,25 @@ def update_team(team_slug: str, payload: UpdateTeamBody, company: str = Query(..
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         conn.close()
+
+
+def _link_team_to_project(conn, company_slug: str, team_slug: str, project_id: str) -> str:
+    """Resolve *project_id* and return the board slug to bind the team to,
+    auto-provisioning one on the project if it doesn't have one yet (same
+    convention POST /projects uses for a fresh team-targeted project)."""
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        raise ValueError("projects_db is unavailable")
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, project_id)
+        if project is None:
+            raise ValueError(f"unknown project: {project_id}")
+        board_slug = project.board_slug
+        if not board_slug:
+            board_slug = f"team-{team_slug}"
+            projects_db.update_project(pconn, project.id, board_slug=board_slug)
+    return board_slug
 
 
 @router.delete("/teams/{team_slug}")

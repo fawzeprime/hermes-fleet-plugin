@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS teams (
     name              TEXT NOT NULL,
     description       TEXT,
     kanban_board_slug TEXT,
+    workspace_path    TEXT,
     created_at        INTEGER NOT NULL,
     archived          INTEGER NOT NULL DEFAULT 0,
     UNIQUE(company_id, slug)
@@ -109,7 +110,9 @@ _OPTIONAL_COMPANY_COLUMNS: tuple[tuple[str, str], ...] = (
     ("kind", "kind TEXT NOT NULL DEFAULT 'company'"),
     ("kanban_board_slug", "kanban_board_slug TEXT"),
 )
-_OPTIONAL_TEAM_COLUMNS: tuple[tuple[str, str], ...] = ()
+_OPTIONAL_TEAM_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("workspace_path", "workspace_path TEXT"),
+)
 _OPTIONAL_MEMBERSHIP_COLUMNS: tuple[tuple[str, str], ...] = ()
 
 
@@ -297,6 +300,7 @@ class Team:
     created_at: int
     description: Optional[str] = None
     kanban_board_slug: Optional[str] = None
+    workspace_path: Optional[str] = None
     archived: bool = False
     members: List[Membership] = field(default_factory=list)
 
@@ -308,6 +312,7 @@ class Team:
             "name": self.name,
             "description": self.description,
             "kanban_board_slug": self.kanban_board_slug,
+            "workspace_path": self.workspace_path,
             "archived": bool(self.archived),
             "created_at": self.created_at,
             "members": [m.to_dict() for m in self.members],
@@ -355,6 +360,7 @@ def _company_from_row(row: sqlite3.Row) -> Company:
 
 
 def _team_from_row(row: sqlite3.Row) -> Team:
+    keys = row.keys()
     return Team(
         id=row["id"],
         company_id=row["company_id"],
@@ -362,6 +368,7 @@ def _team_from_row(row: sqlite3.Row) -> Team:
         name=row["name"],
         description=row["description"],
         kanban_board_slug=row["kanban_board_slug"],
+        workspace_path=row["workspace_path"] if "workspace_path" in keys else None,
         archived=bool(row["archived"]),
         created_at=row["created_at"],
     )
@@ -591,6 +598,26 @@ def set_team_board(conn: sqlite3.Connection, company_slug: str, team_slug: str, 
     normalized = normalize_board_slug(board_slug) if board_slug else None
     with write_txn(conn):
         conn.execute("UPDATE teams SET kanban_board_slug = ? WHERE id = ?", (normalized, team.id))
+
+
+def normalize_workspace_path(path: Optional[str]) -> Optional[str]:
+    """Absolute, user-expanded workspace path (or None). No existence check
+    here — that's a soft, best-effort warning at the CLI/API layer, same
+    treatment as a board slug that doesn't exist yet."""
+    if path is None:
+        return None
+    s = str(path).strip()
+    if not s:
+        return None
+    return os.path.abspath(os.path.expanduser(s))
+
+
+def set_team_workspace(conn: sqlite3.Connection, company_slug: str, team_slug: str, workspace_path: Optional[str]) -> None:
+    """Set (or clear, with ``workspace_path=None``) a team's workspace folder."""
+    team = _require_team(conn, company_slug, team_slug)
+    normalized = normalize_workspace_path(workspace_path)
+    with write_txn(conn):
+        conn.execute("UPDATE teams SET workspace_path = ? WHERE id = ?", (normalized, team.id))
 
 
 # ---------------------------------------------------------------------------

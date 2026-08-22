@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Any
 
 from . import db as fleet_db
@@ -100,6 +101,24 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     t_unlink.add_argument("team_slug")
     t_unlink.add_argument("--company", required=True)
 
+    t_workspace = team_sub.add_parser("set-workspace", help="Set a team's workspace folder")
+    t_workspace.add_argument("team_slug")
+    t_workspace.add_argument("--company", required=True)
+    t_workspace.add_argument("path")
+
+    t_unset_workspace = team_sub.add_parser("unset-workspace", help="Clear a team's workspace folder")
+    t_unset_workspace.add_argument("team_slug")
+    t_unset_workspace.add_argument("--company", required=True)
+
+    t_link_project = team_sub.add_parser("link-project", help="Link a team's tasks to an existing project")
+    t_link_project.add_argument("team_slug")
+    t_link_project.add_argument("--company", required=True)
+    t_link_project.add_argument("project", help="Project id or slug")
+
+    t_unlink_project = team_sub.add_parser("unlink-project", help="Unlink a team's project (clears its board link)")
+    t_unlink_project.add_argument("team_slug")
+    t_unlink_project.add_argument("--company", required=True)
+
     # -- org ------------------------------------------------------------------
     p_org = subs.add_parser("org", help="Print the full company -> team -> member tree")
     p_org.add_argument("--company", default=None)
@@ -156,7 +175,8 @@ def _dispatch_team(args: argparse.Namespace) -> int:
     if not action:
         print(
             "Usage: hermes fleet team "
-            "{create|list|show|rename|delete|add-member|remove-member|members|link-board|unlink-board}"
+            "{create|list|show|rename|delete|add-member|remove-member|members|"
+            "link-board|unlink-board|set-workspace|unset-workspace|link-project|unlink-project}"
         )
         return 2
     handlers = {
@@ -170,6 +190,10 @@ def _dispatch_team(args: argparse.Namespace) -> int:
         "members": _cmd_team_members,
         "link-board": _cmd_team_link_board,
         "unlink-board": _cmd_team_unlink_board,
+        "set-workspace": _cmd_team_set_workspace,
+        "unset-workspace": _cmd_team_unset_workspace,
+        "link-project": _cmd_team_link_project,
+        "unlink-project": _cmd_team_unlink_project,
     }
     handler = handlers.get(action)
     if handler is None:
@@ -197,7 +221,8 @@ def _fmt_company_line(company: fleet_db.Company) -> str:
 def _fmt_team_line(team: fleet_db.Team) -> str:
     tag = " [archived]" if team.archived else ""
     board = f"  (board: {team.kanban_board_slug})" if team.kanban_board_slug else ""
-    return f"  ◆ {team.slug}  {team.name}{tag}{board}"
+    workspace = f"  (workspace: {team.workspace_path})" if team.workspace_path else ""
+    return f"  ◆ {team.slug}  {team.name}{tag}{board}{workspace}"
 
 
 def _manager_lookup(members: list) -> dict:
@@ -330,6 +355,8 @@ def _cmd_team_show(args: argparse.Namespace) -> None:
         print(f"  {team.description}")
     if team.kanban_board_slug:
         print(f"  board: {team.kanban_board_slug}")
+    if team.workspace_path:
+        print(f"  workspace: {team.workspace_path}")
     print(f"\n  {len(team.members)} member(s):")
     managers = _manager_lookup(team.members)
     for member in team.members:
@@ -411,6 +438,46 @@ def _warn_if_board_missing(board_slug: str) -> None:
             print(f"Warning: kanban board {board_slug!r} does not exist yet.")
     except Exception:
         pass
+
+
+def _cmd_team_set_workspace(args: argparse.Namespace) -> None:
+    if not os.path.isdir(os.path.expanduser(args.path)):
+        print(f"Warning: {args.path!r} does not exist on this machine yet.")
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_team_workspace(conn, args.company, args.team_slug, args.path)
+    print(f"Set workspace for {args.team_slug!r}: {fleet_db.normalize_workspace_path(args.path)}")
+
+
+def _cmd_team_unset_workspace(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_team_workspace(conn, args.company, args.team_slug, None)
+    print(f"Cleared workspace for {args.team_slug!r}")
+
+
+def _cmd_team_link_project(args: argparse.Namespace) -> None:
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        print("Error: projects_db is unavailable.")
+        return
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, args.project)
+        if project is None:
+            print(f"Unknown project: {args.project}")
+            return
+        board_slug = project.board_slug
+        if not board_slug:
+            board_slug = f"team-{args.team_slug}"
+            projects_db.update_project(pconn, project.id, board_slug=board_slug)
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_team_board(conn, args.company, args.team_slug, board_slug)
+    print(f"Linked {args.team_slug!r} to project {project.slug!r} (board {board_slug!r})")
+
+
+def _cmd_team_unlink_project(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        fleet_db.set_team_board(conn, args.company, args.team_slug, None)
+    print(f"Unlinked project from {args.team_slug!r}")
 
 
 # ---------------------------------------------------------------------------

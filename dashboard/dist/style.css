@@ -111,6 +111,43 @@
   flex-wrap: wrap;
 }
 
+.hf-team-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.hf-team-workspace {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hf-team-workspace-path {
+  font-family: monospace;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.hf-team-workspace-editing {
+  max-width: 420px;
+}
+
+.hf-team-project {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hf-team-project-label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 .hf-members {
   display: flex;
   flex-direction: column;

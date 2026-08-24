@@ -102,6 +102,17 @@ CREATE TABLE IF NOT EXISTS memberships (
 CREATE INDEX IF NOT EXISTS idx_memberships_team ON memberships(team_id);
 CREATE INDEX IF NOT EXISTS idx_memberships_profile ON memberships(profile);
 CREATE INDEX IF NOT EXISTS idx_memberships_reports_to ON memberships(reports_to);
+
+CREATE TABLE IF NOT EXISTS fleet_roles (
+    id           TEXT PRIMARY KEY,
+    company_id   TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    profile      TEXT NOT NULL,
+    role_type    TEXT NOT NULL,
+    assigned_at  INTEGER NOT NULL,
+    UNIQUE(company_id, role_type)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_roles_company ON fleet_roles(company_id);
+CREATE INDEX IF NOT EXISTS idx_fleet_roles_profile ON fleet_roles(profile);
 """
 
 # Columns added after v1 — re-applied idempotently on every open so a
@@ -330,6 +341,7 @@ class Company:
     kanban_board_slug: Optional[str] = None
     archived: bool = False
     teams: List[Team] = field(default_factory=list)
+    fleet_roles: List[FleetRole] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -342,7 +354,40 @@ class Company:
             "archived": bool(self.archived),
             "created_at": self.created_at,
             "teams": [t.to_dict() for t in self.teams],
+            "fleet_roles": [r.to_dict() for r in self.fleet_roles],
         }
+
+
+VALID_FLEET_ROLE_TYPES = ("leader", "manager", "summariser", "reflection_coach")
+VALID_FLEET_ROLE_LABELS = {
+    "leader": "Leader / CEO",
+    "manager": "Manager",
+    "summariser": "Summariser",
+    "reflection_coach": "Reflection Coach",
+}
+
+
+@dataclass
+class FleetRole:
+    id: str
+    company_id: str
+    profile: str
+    role_type: str
+    assigned_at: int
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "company_id": self.company_id,
+            "profile": self.profile,
+            "role_type": self.role_type,
+            "role_label": VALID_FLEET_ROLE_LABELS.get(self.role_type, self.role_type),
+            "assigned_at": self.assigned_at,
+        }
+
+
+def _new_fleet_role_id() -> str:
+    return "fr_" + secrets.token_hex(4)
 
 
 def _company_from_row(row: sqlite3.Row) -> Company:
@@ -685,6 +730,92 @@ def remove_member(conn: sqlite3.Connection, company_slug: str, team_slug: str, p
 
 
 # ---------------------------------------------------------------------------
+# Fleet-role CRUD (leader, manager, summariser, reflection_coach)
+# ---------------------------------------------------------------------------
+
+
+def _fleet_role_from_row(row: sqlite3.Row) -> FleetRole:
+    return FleetRole(
+        id=row["id"],
+        company_id=row["company_id"],
+        profile=row["profile"],
+        role_type=row["role_type"],
+        assigned_at=row["assigned_at"],
+    )
+
+
+def set_fleet_role(
+    conn: sqlite3.Connection,
+    company_slug: str,
+    role_type: str,
+    profile: str,
+) -> str:
+    """Assign *profile* to a fleet-level role (leader, manager, summariser,
+    reflection_coach). Upserts: one role_type per company."""
+    if role_type not in VALID_FLEET_ROLE_TYPES:
+        raise ValueError(
+            f"invalid role_type {role_type!r}: must be one of {', '.join(VALID_FLEET_ROLE_TYPES)}"
+        )
+    profile = (profile or "").strip()
+    if not profile:
+        raise ValueError("profile is required")
+    company = _require_company(conn, company_slug)
+    role_id = _new_fleet_role_id()
+    with write_txn(conn):
+        conn.execute(
+            "INSERT INTO fleet_roles (id, company_id, profile, role_type, assigned_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(company_id, role_type) DO UPDATE SET profile = excluded.profile, "
+            "assigned_at = excluded.assigned_at",
+            (role_id, company.id, profile, role_type, _now()),
+        )
+    return role_id
+
+
+def get_fleet_roles(conn: sqlite3.Connection, company_slug: str) -> List[FleetRole]:
+    company = get_company(conn, company_slug)
+    if company is None:
+        return []
+    rows = conn.execute(
+        "SELECT * FROM fleet_roles WHERE company_id = ? ORDER BY role_type", (company.id,)
+    ).fetchall()
+    return [_fleet_role_from_row(r) for r in rows]
+
+
+def get_fleet_role(conn: sqlite3.Connection, company_slug: str, role_type: str) -> Optional[FleetRole]:
+    company = get_company(conn, company_slug)
+    if company is None:
+        return None
+    row = conn.execute(
+        "SELECT * FROM fleet_roles WHERE company_id = ? AND role_type = ?",
+        (company.id, role_type),
+    ).fetchone()
+    return _fleet_role_from_row(row) if row else None
+
+
+def remove_fleet_role(conn: sqlite3.Connection, company_slug: str, role_type: str) -> None:
+    company = _require_company(conn, company_slug)
+    with write_txn(conn):
+        cur = conn.execute(
+            "DELETE FROM fleet_roles WHERE company_id = ? AND role_type = ?",
+            (company.id, role_type),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"no {role_type!r} role assigned in fleet {company_slug!r}")
+
+
+def list_all_fleet_roles_by_type(conn: sqlite3.Connection, role_type: str) -> List[dict]:
+    """Return all fleet roles of a given type across all companies, with company context."""
+    rows = conn.execute(
+        "SELECT fr.*, c.slug AS company_slug, c.name AS company_name "
+        "FROM fleet_roles fr JOIN companies c ON fr.company_id = c.id "
+        "WHERE fr.role_type = ? AND c.archived = 0 ORDER BY c.name",
+        (role_type,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # Org tree
 # ---------------------------------------------------------------------------
 
@@ -721,7 +852,7 @@ def list_companies_with_board(conn: sqlite3.Connection) -> List[dict]:
 def org_tree(conn: sqlite3.Connection, *, company_slug: Optional[str] = None) -> List[Company]:
     """Return the full company -> team -> member tree (optionally scoped to
     one company), each membership annotated with its manager's profile name
-    for easy rendering."""
+    for easy rendering, and each company annotated with its fleet-level roles."""
     companies = (
         [c for c in [get_company(conn, company_slug)] if c is not None]
         if company_slug
@@ -729,4 +860,5 @@ def org_tree(conn: sqlite3.Connection, *, company_slug: Optional[str] = None) ->
     )
     for company in companies:
         company.teams = list_teams(conn, company_slug=company.slug, with_members=True)
+        company.fleet_roles = get_fleet_roles(conn, company.slug)
     return companies

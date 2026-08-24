@@ -410,6 +410,148 @@
 
 .hf-orgchart-actions {
   display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------------
+ * Fleet roles panel (inside each company card)
+ * ------------------------------------------------------------------- */
+
+.hf-fleet-roles {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.15);
+}
+
+.hf-fleet-roles-label {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.hf-fleet-roles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+.hf-fleet-role-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.375rem;
+  background: rgba(127, 127, 127, 0.06);
+  font-size: 0.82rem;
+}
+
+.hf-fleet-role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.hf-fleet-role-type {
+  font-weight: 600;
+  font-size: 0.78rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.hf-fleet-role-profile {
+  font-weight: 500;
+}
+
+.hf-fleet-role-remove {
+  opacity: 0.5;
+  font-size: 0.85rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+
+.hf-fleet-role-remove:hover {
+  opacity: 1;
+}
+
+.hf-fleet-role-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hf-fleet-role-form {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.hf-fleet-role-form input {
+  max-width: 140px;
+  font-size: 0.82rem;
+}
+
+.hf-fleet-role-edit {
+  font-size: 0.75rem;
+}
+
+/* ---------------------------------------------------------------------
+ * Global options popover (summariser + reflection_coach)
+ * ------------------------------------------------------------------- */
+
+.hf-global-options {
+  margin-top: 0.5rem;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.hf-global-options-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.hf-global-options-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.hf-global-options-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.hf-global-option-fleet {
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.375rem;
+  background: rgba(127, 127, 127, 0.06);
+}
+
+.hf-global-option-fleet strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+}
+
+.hf-global-option-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hf-global-option-role {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
 }
 
 /* ---------------------------------------------------------------------
@@ -543,6 +685,66 @@
   opacity: 0.55;
   font-style: italic;
   font-size: 0.8rem;
+}
+
+/* Fleet leadership nodes in hierarchy */
+
+.hf-hierarchy-leadership {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 1rem;
+}
+
+.hf-hierarchy-leader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hf-hierarchy-manager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hf-hierarchy-connector {
+  width: 2px;
+  height: 1.25rem;
+  background: var(--midground, #ffac02);
+}
+
+.hf-node-leader {
+  background: color-mix(in srgb, var(--midground, #ffac02) 20%, transparent);
+  border-color: var(--midground, #ffac02);
+  border-width: 2px;
+  font-weight: 700;
+}
+
+.hf-node-leader .hf-node-name {
+  font-size: 0.95rem;
+}
+
+.hf-node-manager {
+  background: color-mix(in srgb, var(--midground, #ffac02) 10%, transparent);
+  border-color: color-mix(in srgb, var(--midground, #ffac02) 60%, transparent);
+}
+
+.hf-node-manager .hf-node-name {
+  font-size: 0.88rem;
+}
+
+.hf-hierarchy-global-agents {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  padding: 0.4rem 0;
+}
+
+.hf-global-agent-badge {
+  font-size: 0.78rem;
 }
 
 /* ---------------------------------------------------------------------

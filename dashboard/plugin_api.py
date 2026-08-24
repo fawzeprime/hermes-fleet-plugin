@@ -357,6 +357,60 @@ def remove_member(team_slug: str, profile: str, company: str = Query(...)):
 
 
 # ---------------------------------------------------------------------------
+# Fleet roles (leader, manager, summariser, reflection_coach)
+# ---------------------------------------------------------------------------
+
+
+class SetFleetRoleBody(BaseModel):
+    profile: str
+
+
+@router.get("/fleet-roles")
+def list_fleet_roles(company: str = Query(...)):
+    conn = _conn()
+    try:
+        roles = fleet_db.get_fleet_roles(conn, company)
+        return {"roles": [r.to_dict() for r in roles]}
+    finally:
+        conn.close()
+
+
+@router.put("/fleet-roles/{role_type}")
+def set_fleet_role(role_type: str, payload: SetFleetRoleBody, company: str = Query(...)):
+    conn = _conn()
+    try:
+        role_id = fleet_db.set_fleet_role(conn, company, role_type, payload.profile)
+        role = fleet_db.get_fleet_role(conn, company, role_type)
+        return {"role": role.to_dict() if role else None}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@router.delete("/fleet-roles/{role_type}")
+def remove_fleet_role(role_type: str, company: str = Query(...)):
+    conn = _conn()
+    try:
+        fleet_db.remove_fleet_role(conn, company, role_type)
+        return {"removed": role_type}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@router.get("/fleet-roles/global/{role_type}")
+def list_fleet_roles_global(role_type: str):
+    conn = _conn()
+    try:
+        rows = fleet_db.list_all_fleet_roles_by_type(conn, role_type)
+        return {"assignments": rows}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Org tree + profile picker
 # ---------------------------------------------------------------------------
 

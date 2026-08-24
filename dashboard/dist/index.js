@@ -22,6 +22,16 @@
   // Keep in sync with db.VALID_COMPANY_KINDS.
   const COMPANY_KINDS = ["company", "team", "group"];
 
+  // Keep in sync with db.VALID_FLEET_ROLE_TYPES / VALID_FLEET_ROLE_LABELS.
+  const FLEET_ROLE_TYPES = ["leader", "manager", "summariser", "reflection_coach"];
+  const FLEET_ROLE_LABELS = {
+    leader: "Leader / CEO",
+    manager: "Manager",
+    summariser: "Summariser",
+    reflection_coach: "Reflection Coach",
+  };
+  const GLOBAL_ROLE_TYPES = ["summariser", "reflection_coach"];
+
   // fetchJSON passes `init` straight through to native fetch() without
   // touching `body` or headers — a JSON string body with no explicit
   // Content-Type defaults to text/plain, which makes the backend's Pydantic
@@ -187,6 +197,126 @@
         }))
       ),
       error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Fleet role controls (leader, manager, summariser, reflection_coach)
+  // ---------------------------------------------------------------------
+
+  function FleetRoleBadge({ roleType, profile, companySlug, onChanged }) {
+    var label = FLEET_ROLE_LABELS[roleType] || roleType;
+    return h("div", { className: "hf-fleet-role-badge" },
+      h("span", { className: "hf-fleet-role-type" }, label),
+      h("span", { className: "hf-fleet-role-profile" }, profile),
+      h(Button, {
+        ghost: true, destructive: true, className: "hf-fleet-role-remove",
+        onClick: function () {
+          api("/fleet-roles/" + encodeURIComponent(roleType) + "?company=" + encodeURIComponent(companySlug), { method: "DELETE" })
+            .then(onChanged).catch(function (err) { window.alert(String(err)); });
+        },
+      }, "×")
+    );
+  }
+
+  function FleetRoleSetForm({ roleType, companySlug, currentProfile, onDone }) {
+    const [editing, setEditing] = useState(false);
+    const [profile, setProfile] = useState(currentProfile || "");
+    const [error, setError] = useState(null);
+    var label = FLEET_ROLE_LABELS[roleType] || roleType;
+
+    if (!editing) {
+      return h(Button, {
+        ghost: true, className: "hf-fleet-role-edit",
+        onClick: function () { setProfile(currentProfile || ""); setEditing(true); },
+      }, currentProfile ? "Change" : "Assign");
+    }
+
+    function save() {
+      if (!profile.trim()) { setError("Profile is required"); return; }
+      api("/fleet-roles/" + encodeURIComponent(roleType) + "?company=" + encodeURIComponent(companySlug), {
+        method: "PUT",
+        body: JSON.stringify({ profile: profile.trim() }),
+      })
+        .then(function () { setEditing(false); setError(null); onDone(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h("div", { className: "hf-fleet-role-form" },
+      h(Input, {
+        value: profile, onChange: function (e) { setProfile(e.target.value); },
+        placeholder: "profile name", autoFocus: true,
+      }),
+      h(Button, { onClick: save }, "Save"),
+      h(Button, { ghost: true, onClick: function () { setEditing(false); setError(null); } }, "Cancel"),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function FleetRolesPanel({ company, onChanged }) {
+    var rolesByType = {};
+    FLEET_ROLE_TYPES.forEach(function (rt) { rolesByType[rt] = null; });
+    (company.fleet_roles || []).forEach(function (r) { rolesByType[r.role_type] = r; });
+
+    return h("div", { className: "hf-fleet-roles" },
+      h("div", { className: "hf-fleet-roles-label" }, "Fleet Roles"),
+      h("div", { className: "hf-fleet-roles-grid" },
+        FLEET_ROLE_TYPES.map(function (rt) {
+          var role = rolesByType[rt];
+          var label = FLEET_ROLE_LABELS[rt] || rt;
+          return h("div", { key: rt, className: "hf-fleet-role-item" },
+            role
+              ? h(FleetRoleBadge, { roleType: rt, profile: role.profile, companySlug: company.slug, onChanged: onChanged })
+              : h("div", { className: "hf-fleet-role-empty" },
+                  h("span", { className: "hf-fleet-role-type" }, label),
+                  h("span", { className: "hf-empty" }, "Not assigned"),
+                  h(FleetRoleSetForm, { roleType: rt, companySlug: company.slug, currentProfile: null, onDone: onChanged })
+                ),
+            role && h(FleetRoleSetForm, { roleType: rt, companySlug: company.slug, currentProfile: role.profile, onDone: onChanged })
+          );
+        })
+      )
+    );
+  }
+
+  // Global roles popover (summariser + reflection_coach across all fleets)
+  function GlobalRoleOptions({ companies, allProfiles, onChanged }) {
+    const [open, setOpen] = useState(false);
+
+    if (!open) {
+      return h(Button, { ghost: true, onClick: function () { setOpen(true); } }, "⚙ Options");
+    }
+
+    return h(Card, { className: "hf-global-options" },
+      h(CardContent, null,
+        h("div", { className: "hf-global-options-header" },
+          h("h3", null, "Global Fleet Agents"),
+          h("p", { className: "hf-description" }, "Summariser and Reflection Coach operate across all fleets."),
+          h(Button, { ghost: true, onClick: function () { setOpen(false); } }, "Close")
+        ),
+        h("div", { className: "hf-global-options-grid" },
+          companies.map(function (c) {
+            var rolesByType = {};
+            (c.fleet_roles || []).forEach(function (r) { rolesByType[r.role_type] = r; });
+            return h("div", { key: c.id, className: "hf-global-option-fleet" },
+              h("strong", null, c.name),
+              h("div", { className: "hf-global-option-roles" },
+                GLOBAL_ROLE_TYPES.map(function (rt) {
+                  var role = rolesByType[rt];
+                  var label = FLEET_ROLE_LABELS[rt] || rt;
+                  return h("div", { key: rt, className: "hf-global-option-role" },
+                    h("span", { className: "hf-fleet-role-type" }, label),
+                    role
+                      ? h("span", { className: "hf-fleet-role-profile" }, role.profile)
+                      : h("span", { className: "hf-empty" }, "—"),
+                    h(FleetRoleSetForm, { roleType: rt, companySlug: c.slug, currentProfile: role ? role.profile : null, onDone: onChanged })
+                  );
+                })
+              )
+            );
+          })
+        )
+      )
     );
   }
 
@@ -431,6 +561,7 @@
           )
         ),
         company.description && h("p", { className: "hf-description" }, company.description),
+        h(FleetRolesPanel, { company: company, onChanged: onChanged }),
         h("div", { className: "hf-teams" },
           company.teams.length === 0 && h("div", { className: "hf-empty" }, "No teams yet."),
           company.teams.map(function (t) {
@@ -571,7 +702,8 @@
   function OrgChartTab({ companies, profiles, projects, boards, loading, error, load }) {
     return h("div", { className: "hf-orgchart" },
       h("div", { className: "hf-orgchart-actions" },
-        h(AddCompanyForm, { onDone: load })
+        h(AddCompanyForm, { onDone: load }),
+        h(GlobalRoleOptions, { companies: companies, allProfiles: profiles, onChanged: load })
       ),
       error && h(Card, { className: "hf-error-card" }, h(CardContent, null, String(error))),
       loading && companies.length === 0 && h("div", { className: "hf-empty" }, "Loading…"),
@@ -620,8 +752,48 @@
     );
   }
 
-  function TeamFlowchart({ team }) {
-    const roots = buildReportingForest(team);
+  function TeamFlowchart({ team, leader, manager }) {
+    var roots = buildReportingForest(team);
+
+    // If there's a fleet leader/manager, restructure the tree:
+    // Leader -> Manager -> (all roots that aren't leader/manager themselves)
+    if (leader || manager) {
+      // Filter out leader/manager from roots if they happen to be team members
+      var filteredRoots = roots.filter(function (r) {
+        if (leader && r.profile === leader.profile) return false;
+        if (manager && r.profile === manager.profile) return false;
+        return true;
+      });
+
+      // Build the leadership chain at the top
+      var topNode = null;
+      if (leader) {
+        var leaderNode = { profile: leader.profile, role: "Leader / CEO", children: [], id: "fleet-leader" };
+        if (manager) {
+          var managerNode = { profile: manager.profile, role: "Manager", children: filteredRoots, id: "fleet-manager" };
+          leaderNode.children = [managerNode];
+        } else {
+          leaderNode.children = filteredRoots;
+        }
+        topNode = leaderNode;
+      } else if (manager) {
+        var managerOnlyNode = { profile: manager.profile, role: "Manager", children: filteredRoots, id: "fleet-manager" };
+        topNode = managerOnlyNode;
+      }
+
+      if (topNode) {
+        return h("div", { className: "hf-flowchart" },
+          h("ul", { className: "hf-tree" },
+            h("li", null,
+              h("div", { className: "hf-node hf-node-team" }, team.name),
+              h("ul", null, h(TreeNode, { key: topNode.id, node: topNode }))
+            )
+          )
+        );
+      }
+    }
+
+    // Default rendering (no fleet leader/manager)
     return h("div", { className: "hf-flowchart" },
       h("ul", { className: "hf-tree" },
         h("li", null,
@@ -635,7 +807,7 @@
   }
 
   function HierarchyTab({ companies }) {
-    const hasAnyTeams = companies.some(function (c) { return c.teams.length > 0; });
+    var hasAnyTeams = companies.some(function (c) { return c.teams.length > 0; });
     if (!hasAnyTeams) {
       return h(Card, { className: "hf-empty-card" },
         h(CardContent, null, "No teams yet. Create a fleet and a team in the Org Chart tab to see the hierarchy.")
@@ -643,12 +815,48 @@
     }
     return h("div", { className: "hf-hierarchy" }, companies.map(function (c) {
       if (c.teams.length === 0) return null;
+
+      // Build fleet-level role lookup
+      var rolesByType = {};
+      (c.fleet_roles || []).forEach(function (r) { rolesByType[r.role_type] = r; });
+      var leader = rolesByType["leader"] || null;
+      var manager = rolesByType["manager"] || null;
+
       return h("div", { key: c.id, className: "hf-hierarchy-company" },
         h("h2", null, c.name),
+
+        // Fleet leadership banner
+        (leader || manager) && h("div", { className: "hf-hierarchy-leadership" },
+          leader && h("div", { className: "hf-hierarchy-leader" },
+            h("div", { className: "hf-node hf-node-leader" },
+              h("div", { className: "hf-node-name" }, leader.profile),
+              h("div", { className: "hf-node-role" }, "Leader / CEO")
+            )
+          ),
+          manager && h("div", { className: "hf-hierarchy-manager" },
+            leader && h("div", { className: "hf-hierarchy-connector" }),
+            h("div", { className: "hf-node hf-node-manager" },
+              h("div", { className: "hf-node-name" }, manager.profile),
+              h("div", { className: "hf-node-role" }, "Manager")
+            )
+          )
+        ),
+
+        // Global agents row
+        (rolesByType["summariser"] || rolesByType["reflection_coach"]) && h("div", { className: "hf-hierarchy-global-agents" },
+          rolesByType["summariser"] && h(Badge, { tone: "outline", className: "hf-global-agent-badge" },
+            "Summariser: " + rolesByType["summariser"].profile
+          ),
+          rolesByType["reflection_coach"] && h(Badge, { tone: "outline", className: "hf-global-agent-badge" },
+            "Reflection Coach: " + rolesByType["reflection_coach"].profile
+          )
+        ),
+
+        // Teams with their hierarchy trees
         c.teams.map(function (t) {
           return h("div", { key: t.id, className: "hf-hierarchy-team" },
             h("h3", null, t.name),
-            h(TeamFlowchart, { team: t })
+            h(TeamFlowchart, { team: t, leader: leader, manager: manager })
           );
         })
       );

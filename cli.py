@@ -136,6 +136,27 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_org.add_argument("--company", default=None)
     p_org.add_argument("--json", action="store_true")
 
+    # -- fleet-role -----------------------------------------------------------
+    p_role = subs.add_parser("fleet-role", help="Manage fleet-level roles (leader, manager, summariser, coach)")
+    role_sub = p_role.add_subparsers(dest="fleet_role_action")
+
+    r_set = role_sub.add_parser("set", help="Assign a fleet-level role")
+    r_set.add_argument("company_slug")
+    r_set.add_argument("role_type", choices=fleet_db.VALID_FLEET_ROLE_TYPES)
+    r_set.add_argument("profile")
+
+    r_list = role_sub.add_parser("list", help="List fleet roles for a company")
+    r_list.add_argument("company_slug")
+    r_list.add_argument("--json", action="store_true")
+
+    r_remove = role_sub.add_parser("remove", help="Remove a fleet-level role")
+    r_remove.add_argument("company_slug")
+    r_remove.add_argument("role_type", choices=fleet_db.VALID_FLEET_ROLE_TYPES)
+
+    r_show = role_sub.add_parser("show-global", help="Show all assignments of a role type across fleets")
+    r_show.add_argument("role_type", choices=fleet_db.VALID_FLEET_ROLE_TYPES)
+    r_show.add_argument("--json", action="store_true")
+
     subparser.set_defaults(func=fleet_command)
 
 
@@ -153,6 +174,8 @@ def fleet_command(args: argparse.Namespace) -> int:
         if action == "org":
             _cmd_org(args)
             return 0
+        if action == "fleet-role":
+            return _dispatch_fleet_role(args)
         print(f"Unknown fleet action: {action}")
         return 2
     except ValueError as exc:
@@ -536,6 +559,78 @@ def _cmd_team_unassign_project(args: argparse.Namespace) -> None:
             return
         projects_db.update_project(pconn, project.id, board_slug="")
     print(f"Unassigned project {project.slug!r}")
+
+
+# ---------------------------------------------------------------------------
+# Fleet-role commands
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_fleet_role(args: argparse.Namespace) -> int:
+    action = getattr(args, "fleet_role_action", None)
+    if not action:
+        print("Usage: hermes fleet fleet-role {set|list|remove|show-global}")
+        return 2
+    handlers = {
+        "set": _cmd_fleet_role_set,
+        "list": _cmd_fleet_role_list,
+        "remove": _cmd_fleet_role_remove,
+        "show-global": _cmd_fleet_role_show_global,
+    }
+    handler = handlers.get(action)
+    if handler is None:
+        print(f"Unknown fleet-role action: {action}")
+        return 2
+    try:
+        handler(args)
+        return 0
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+
+def _cmd_fleet_role_set(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        role_id = fleet_db.set_fleet_role(conn, args.company_slug, args.role_type, args.profile)
+    label = fleet_db.VALID_FLEET_ROLE_LABELS.get(args.role_type, args.role_type)
+    print(f"Assigned {args.profile!r} as {label} for fleet {args.company_slug!r} ({role_id})")
+
+
+def _cmd_fleet_role_list(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        roles = fleet_db.get_fleet_roles(conn, args.company_slug)
+    if args.json:
+        _print_json([r.to_dict() for r in roles])
+        return
+    if not roles:
+        print(f"No fleet roles assigned for {args.company_slug!r}.")
+        return
+    print(f"\nFleet roles for {args.company_slug!r}:\n")
+    for role in roles:
+        label = fleet_db.VALID_FLEET_ROLE_LABELS.get(role.role_type, role.role_type)
+        print(f"  {label}: {role.profile}")
+
+
+def _cmd_fleet_role_remove(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        fleet_db.remove_fleet_role(conn, args.company_slug, args.role_type)
+    label = fleet_db.VALID_FLEET_ROLE_LABELS.get(args.role_type, args.role_type)
+    print(f"Removed {label} role from fleet {args.company_slug!r}")
+
+
+def _cmd_fleet_role_show_global(args: argparse.Namespace) -> None:
+    with fleet_db.connect_closing() as conn:
+        rows = fleet_db.list_all_fleet_roles_by_type(conn, args.role_type)
+    if args.json:
+        _print_json(rows)
+        return
+    label = fleet_db.VALID_FLEET_ROLE_LABELS.get(args.role_type, args.role_type)
+    if not rows:
+        print(f"No {label} assignments found across any fleet.")
+        return
+    print(f"\n{label} assignments across all fleets:\n")
+    for row in rows:
+        print(f"  {row['company_name']} ({row['company_slug']}): {row['profile']}")
 
 
 # ---------------------------------------------------------------------------

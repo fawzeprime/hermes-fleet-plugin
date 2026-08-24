@@ -113,6 +113,25 @@ CREATE TABLE IF NOT EXISTS fleet_roles (
 );
 CREATE INDEX IF NOT EXISTS idx_fleet_roles_company ON fleet_roles(company_id);
 CREATE INDEX IF NOT EXISTS idx_fleet_roles_profile ON fleet_roles(profile);
+
+CREATE TABLE IF NOT EXISTS project_extensions (
+    project_id       TEXT PRIMARY KEY,
+    workspace_path   TEXT,
+    github_url       TEXT,
+    parent_project_id TEXT,
+    updated_at       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_documents (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    url          TEXT,
+    doc_type     TEXT NOT NULL DEFAULT 'link',
+    notes        TEXT,
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_documents(project_id);
 """
 
 # Columns added after v1 — re-applied idempotently on every open so a
@@ -813,6 +832,187 @@ def list_all_fleet_roles_by_type(conn: sqlite3.Connection, role_type: str) -> Li
         (role_type,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Project extensions (workspace, github, sub-projects)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProjectExtension:
+    project_id: str
+    updated_at: int
+    workspace_path: Optional[str] = None
+    github_url: Optional[str] = None
+    parent_project_id: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "workspace_path": self.workspace_path,
+            "github_url": self.github_url,
+            "parent_project_id": self.parent_project_id,
+            "updated_at": self.updated_at,
+        }
+
+
+def get_project_extension(conn: sqlite3.Connection, project_id: str) -> Optional[ProjectExtension]:
+    row = conn.execute(
+        "SELECT * FROM project_extensions WHERE project_id = ?", (project_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    return ProjectExtension(
+        project_id=row["project_id"],
+        workspace_path=row["workspace_path"],
+        github_url=row["github_url"],
+        parent_project_id=row["parent_project_id"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_project_extension(
+    conn: sqlite3.Connection,
+    project_id: str,
+    *,
+    workspace_path: Optional[str] = None,
+    github_url: Optional[str] = None,
+    parent_project_id: Optional[str] = None,
+    clear_workspace: bool = False,
+    clear_github: bool = False,
+    clear_parent: bool = False,
+) -> None:
+    """Create or update a project extension. Pass None to leave a field unchanged;
+    pass '' with the clear flag to NULL it."""
+    now = _now()
+    existing = get_project_extension(conn, project_id)
+
+    ws = workspace_path
+    if clear_workspace:
+        ws = ""
+    gh = github_url
+    if clear_github:
+        gh = ""
+    parent = parent_project_id
+    if clear_parent:
+        parent = ""
+
+    if existing is None:
+        conn.execute(
+            "INSERT INTO project_extensions (project_id, workspace_path, github_url, parent_project_id, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (project_id, ws or None, gh or None, parent or None, now),
+        )
+    else:
+        sets = ["updated_at = ?"]
+        params: list = [now]
+        if ws is not None:
+            sets.append("workspace_path = ?")
+            params.append(ws or None)
+        if gh is not None:
+            sets.append("github_url = ?")
+            params.append(gh or None)
+        if parent is not None:
+            sets.append("parent_project_id = ?")
+            params.append(parent or None)
+        params.append(project_id)
+        conn.execute(f"UPDATE project_extensions SET {', '.join(sets)} WHERE project_id = ?", params)
+
+
+def list_sub_projects(conn: sqlite3.Connection, parent_project_id: str) -> List[ProjectExtension]:
+    rows = conn.execute(
+        "SELECT * FROM project_extensions WHERE parent_project_id = ? ORDER BY updated_at",
+        (parent_project_id,),
+    ).fetchall()
+    return [ProjectExtension(
+        project_id=r["project_id"],
+        workspace_path=r["workspace_path"],
+        github_url=r["github_url"],
+        parent_project_id=r["parent_project_id"],
+        updated_at=r["updated_at"],
+    ) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Project documents
+# ---------------------------------------------------------------------------
+
+
+VALID_DOC_TYPES = ("link", "file", "design", "spec", "meeting_notes", "other")
+
+
+@dataclass
+class ProjectDocument:
+    id: str
+    project_id: str
+    name: str
+    created_at: int
+    url: Optional[str] = None
+    doc_type: str = "link"
+    notes: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "name": self.name,
+            "url": self.url,
+            "doc_type": self.doc_type,
+            "notes": self.notes,
+            "created_at": self.created_at,
+        }
+
+
+def _new_doc_id() -> str:
+    return "pd_" + secrets.token_hex(4)
+
+
+def add_project_document(
+    conn: sqlite3.Connection,
+    project_id: str,
+    *,
+    name: str,
+    url: Optional[str] = None,
+    doc_type: str = "link",
+    notes: Optional[str] = None,
+) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("document name is required")
+    if doc_type not in VALID_DOC_TYPES:
+        raise ValueError(f"invalid doc_type {doc_type!r}: must be one of {', '.join(VALID_DOC_TYPES)}")
+    doc_id = _new_doc_id()
+    with write_txn(conn):
+        conn.execute(
+            "INSERT INTO project_documents (id, project_id, name, url, doc_type, notes, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (doc_id, project_id, name, url or None, doc_type, notes or None, _now()),
+        )
+    return doc_id
+
+
+def list_project_documents(conn: sqlite3.Connection, project_id: str) -> List[ProjectDocument]:
+    rows = conn.execute(
+        "SELECT * FROM project_documents WHERE project_id = ? ORDER BY created_at",
+        (project_id,),
+    ).fetchall()
+    return [ProjectDocument(
+        id=r["id"],
+        project_id=r["project_id"],
+        name=r["name"],
+        url=r["url"],
+        doc_type=r["doc_type"],
+        notes=r["notes"],
+        created_at=r["created_at"],
+    ) for r in rows]
+
+
+def remove_project_document(conn: sqlite3.Connection, doc_id: str) -> None:
+    with write_txn(conn):
+        cur = conn.execute("DELETE FROM project_documents WHERE id = ?", (doc_id,))
+        if cur.rowcount == 0:
+            raise ValueError(f"no document with id {doc_id!r}")
 
 
 # ---------------------------------------------------------------------------

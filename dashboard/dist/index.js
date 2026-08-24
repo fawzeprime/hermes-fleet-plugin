@@ -1004,28 +1004,250 @@
     );
   }
 
-  function ProjectCard({ project, tasks }) {
-    const label = assignmentLabel(project.assignment);
-    const projectTasks = tasks.filter(function (t) {
+  function ProjectCard({ project, tasks, companies, onChanged }) {
+    var label = assignmentLabel(project.assignment);
+    var projectTasks = tasks.filter(function (t) {
       return project.board_slug && t.board === project.board_slug;
     });
+    var ext = project.extension || {};
+    var docs = project.documents || [];
+    var subs = project.sub_projects || [];
+
     return h(Card, { className: "hf-project" },
       h(CardContent, null,
         h("div", { className: "hf-project-header" },
           h("h3", null, project.name),
-          label
-            ? h(Badge, { tone: "outline" }, label)
-            : h(Badge, { tone: "secondary" }, "Unassigned")
+          h("div", { className: "hf-project-header-actions" },
+            label
+              ? h(Badge, { tone: "outline" }, label)
+              : h(Badge, { tone: "secondary" }, "Unassigned"),
+            h(EditProjectForm, { project: project, companies: companies, onChanged: onChanged })
+          )
         ),
         project.description && h("p", { className: "hf-description" }, project.description),
+
+        // Workspace + GitHub links
+        h("div", { className: "hf-project-links" },
+          ext.workspace_path && h("div", { className: "hf-project-link" },
+            h("span", { className: "hf-project-link-icon" }, "📁"),
+            h("span", { className: "hf-project-link-path" }, ext.workspace_path)
+          ),
+          ext.github_url && h("div", { className: "hf-project-link" },
+            h("span", { className: "hf-project-link-icon" }, "🔗"),
+            h("a", { href: ext.github_url, target: "_blank", rel: "noopener", className: "hf-project-link-url" }, ext.github_url)
+          )
+        ),
+
         project.board_slug && h("div", { className: "hf-project-board" }, "board: " + project.board_slug),
+
+        // Tasks
         h("div", { className: "hf-project-tasks" },
           h("div", { className: "hf-project-tasks-label" }, "Tasks"),
           projectTasks.length === 0
             ? h("div", { className: "hf-empty" }, "No tasks yet.")
             : projectTasks.map(function (t) { return h(TaskRow, { key: t.id, task: t }); })
-        )
+        ),
+
+        // Sub-projects
+        h(SubProjectsSection, { project: project, tasks: tasks, onChanged: onChanged }),
+
+        // Documents
+        h(DocumentsSection, { project: project, onChanged: onChanged })
       )
+    );
+  }
+
+  function EditProjectForm({ project, companies, onChanged }) {
+    const [editing, setEditing] = useState(false);
+    const [name, setName] = useState(project.name || "");
+    const [description, setDescription] = useState(project.description || "");
+    const [workspacePath, setWorkspacePath] = useState((project.extension && project.extension.workspace_path) || "");
+    const [githubUrl, setGithubUrl] = useState((project.extension && project.extension.github_url) || "");
+    const [error, setError] = useState(null);
+
+    if (!editing) {
+      return h(Button, { ghost: true, className: "hf-edit-project-btn", onClick: function () {
+        setName(project.name || "");
+        setDescription(project.description || "");
+        setWorkspacePath((project.extension && project.extension.workspace_path) || "");
+        setGithubUrl((project.extension && project.extension.github_url) || "");
+        setEditing(true);
+      } }, "Edit");
+    }
+
+    function save() {
+      var body = {};
+      if (name !== project.name) body.name = name;
+      if (description !== (project.description || "")) body.description = description;
+      if (workspacePath !== ((project.extension && project.extension.workspace_path) || "")) {
+        if (workspacePath.trim()) {
+          body.workspace_path = workspacePath.trim();
+        } else {
+          body.clear_workspace = true;
+        }
+      }
+      if (githubUrl !== ((project.extension && project.extension.github_url) || "")) {
+        if (githubUrl.trim()) {
+          body.github_url = githubUrl.trim();
+        } else {
+          body.clear_github = true;
+        }
+      }
+      api("/projects/" + encodeURIComponent(project.id), {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      })
+        .then(function () { setEditing(false); setError(null); onChanged(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h(InlineForm, { onCancel: function () { setEditing(false); setError(null); }, onSubmit: save, submitLabel: "Save" },
+      h("div", { className: "hf-field" },
+        h(Label, null, "Name"),
+        h(Input, { value: name, onChange: function (e) { setName(e.target.value); }, autoFocus: true })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Description"),
+        h("textarea", { className: "hf-textarea", value: description, onChange: function (e) { setDescription(e.target.value); }, rows: 3 })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "Workspace path"),
+        h(Input, { value: workspacePath, onChange: function (e) { setWorkspacePath(e.target.value); }, placeholder: "/path/to/workspace" })
+      ),
+      h("div", { className: "hf-field" },
+        h(Label, null, "GitHub URL"),
+        h(Input, { value: githubUrl, onChange: function (e) { setGithubUrl(e.target.value); }, placeholder: "https://github.com/..." })
+      ),
+      error && h("div", { className: "hf-error" }, error)
+    );
+  }
+
+  function SubProjectsSection({ project, tasks, onChanged }) {
+    const [adding, setAdding] = useState(false);
+    const [subName, setSubName] = useState("");
+    const [subDesc, setSubDesc] = useState("");
+    const [error, setError] = useState(null);
+    var subs = project.sub_projects || [];
+
+    function addSub() {
+      if (!subName.trim()) { setError("Name required"); return; }
+      api("/projects/" + encodeURIComponent(project.id) + "/subprojects", {
+        method: "POST",
+        body: JSON.stringify({ name: subName.trim(), description: subDesc.trim() || null }),
+      })
+        .then(function () { setAdding(false); setSubName(""); setSubDesc(""); setError(null); onChanged(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    return h("div", { className: "hf-sub-projects" },
+      h("div", { className: "hf-sub-projects-header" },
+        h("div", { className: "hf-project-tasks-label" }, "Sub-projects (" + subs.length + ")"),
+        !adding && h(Button, { ghost: true, onClick: function () { setAdding(true); } }, "+ Sub-project")
+      ),
+      adding && h("div", { className: "hf-inline-form hf-sub-project-form" },
+        h("div", { className: "hf-field" },
+          h(Label, null, "Name"),
+          h(Input, { value: subName, onChange: function (e) { setSubName(e.target.value); }, autoFocus: true, required: true })
+        ),
+        h("div", { className: "hf-field" },
+          h(Label, null, "Description"),
+          h(Input, { value: subDesc, onChange: function (e) { setSubDesc(e.target.value); } })
+        ),
+        h("div", { className: "hf-inline-form-actions" },
+          h(Button, { onClick: addSub }, "Create"),
+          h(Button, { ghost: true, onClick: function () { setAdding(false); setError(null); } }, "Cancel")
+        ),
+        error && h("div", { className: "hf-error" }, error)
+      ),
+      subs.length === 0 && !adding && h("div", { className: "hf-empty" }, "No sub-projects."),
+      subs.map(function (sp) {
+        var spTasks = tasks.filter(function (t) {
+          return sp.extension && sp.extension.parent_project_id && t.board && t.board.includes(sp.slug);
+        });
+        return h(Card, { key: sp.id, className: "hf-sub-project" },
+          h(CardContent, null,
+            h("div", { className: "hf-sub-project-header" },
+              h("strong", null, sp.name),
+              sp.extension && sp.extension.github_url && h("a", { href: sp.extension.github_url, target: "_blank", className: "hf-project-link-url hf-sub-link" }, "GitHub")
+            ),
+            sp.extension && sp.extension.workspace_path && h("div", { className: "hf-project-link" },
+              h("span", { className: "hf-project-link-icon" }, "📁"),
+              h("span", { className: "hf-project-link-path" }, sp.extension.workspace_path)
+            )
+          )
+        );
+      })
+    );
+  }
+
+  var DOC_TYPE_LABELS = { link: "Link", file: "File", design: "Design", spec: "Spec", meeting_notes: "Meeting Notes", other: "Other" };
+
+  function DocumentsSection({ project, onChanged }) {
+    const [adding, setAdding] = useState(false);
+    const [docName, setDocName] = useState("");
+    const [docUrl, setDocUrl] = useState("");
+    const [docType, setDocType] = useState("link");
+    const [docNotes, setDocNotes] = useState("");
+    const [error, setError] = useState(null);
+    var docs = project.documents || [];
+
+    function addDoc() {
+      if (!docName.trim()) { setError("Name required"); return; }
+      api("/projects/" + encodeURIComponent(project.id) + "/documents", {
+        method: "POST",
+        body: JSON.stringify({ name: docName.trim(), url: docUrl.trim() || null, doc_type: docType, notes: docNotes.trim() || null }),
+      })
+        .then(function () { setAdding(false); setDocName(""); setDocUrl(""); setDocType("link"); setDocNotes(""); setError(null); onChanged(); })
+        .catch(function (err) { setError(String(err)); });
+    }
+
+    function removeDoc(docId) {
+      api("/projects/" + encodeURIComponent(project.id) + "/documents/" + encodeURIComponent(docId), { method: "DELETE" })
+        .then(onChanged).catch(function (err) { window.alert(String(err)); });
+    }
+
+    return h("div", { className: "hf-documents" },
+      h("div", { className: "hf-documents-header" },
+        h("div", { className: "hf-project-tasks-label" }, "Documents (" + docs.length + ")"),
+        !adding && h(Button, { ghost: true, onClick: function () { setAdding(true); } }, "+ Document")
+      ),
+      adding && h("div", { className: "hf-inline-form hf-document-form" },
+        h("div", { className: "hf-field" },
+          h(Label, null, "Name"),
+          h(Input, { value: docName, onChange: function (e) { setDocName(e.target.value); }, autoFocus: true, required: true })
+        ),
+        h("div", { className: "hf-field" },
+          h(Label, null, "URL (optional)"),
+          h(Input, { value: docUrl, onChange: function (e) { setDocUrl(e.target.value); }, placeholder: "https://..." })
+        ),
+        h("div", { className: "hf-field" },
+          h(Label, null, "Type"),
+          h(Select, Object.assign({ value: docType }, selectChangeHandler(setDocType)),
+            Object.keys(DOC_TYPE_LABELS).map(function (k) {
+              return h(SelectOption, { key: k, value: k }, DOC_TYPE_LABELS[k]);
+            })
+          )
+        ),
+        h("div", { className: "hf-field" },
+          h(Label, null, "Notes (optional)"),
+          h("textarea", { className: "hf-textarea", value: docNotes, onChange: function (e) { setDocNotes(e.target.value); }, rows: 2 })
+        ),
+        h("div", { className: "hf-inline-form-actions" },
+          h(Button, { onClick: addDoc }, "Add"),
+          h(Button, { ghost: true, onClick: function () { setAdding(false); setError(null); } }, "Cancel")
+        ),
+        error && h("div", { className: "hf-error" }, error)
+      ),
+      docs.length === 0 && !adding && h("div", { className: "hf-empty" }, "No documents yet."),
+      docs.map(function (d) {
+        return h("div", { key: d.id, className: "hf-document-row" },
+          h(Badge, { tone: "outline", className: "hf-doc-type" }, DOC_TYPE_LABELS[d.doc_type] || d.doc_type),
+          h("span", { className: "hf-doc-name" }, d.name),
+          d.url && h("a", { href: d.url, target: "_blank", rel: "noopener", className: "hf-project-link-url" }, "Open"),
+          d.notes && h("span", { className: "hf-doc-notes" }, d.notes),
+          h(Button, { ghost: true, destructive: true, className: "hf-remove-btn", onClick: function () { removeDoc(d.id); } }, "×")
+        );
+      })
     );
   }
 
@@ -1040,7 +1262,7 @@
         h(CardContent, null, "No projects yet. Create one above.")
       ),
       h("div", { className: "hf-projects" }, projects.map(function (p) {
-        return h(ProjectCard, { key: p.id, project: p, tasks: tasks });
+        return h(ProjectCard, { key: p.id, project: p, tasks: tasks, companies: companies, onChanged: onChanged });
       }))
     );
   }

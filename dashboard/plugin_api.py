@@ -604,20 +604,39 @@ def list_fleet_projects():
     conn = _conn()
     try:
         board_to_team, board_to_company = _board_assignment_maps(conn)
+
+        result = []
+        for p in projects:
+            ext = fleet_db.get_project_extension(conn, p.id)
+            docs = fleet_db.list_project_documents(conn, p.id)
+            sub_exts = fleet_db.list_sub_projects(conn, p.id)
+            # Resolve sub-project names from projects_db
+            sub_projects = []
+            if sub_exts:
+                with projects_db.connect_closing() as pconn:
+                    for se in sub_exts:
+                        sp = projects_db.get_project(pconn, se.project_id)
+                        if sp:
+                            sub_projects.append({
+                                "id": sp.id,
+                                "slug": sp.slug,
+                                "name": sp.name,
+                                "extension": se.to_dict(),
+                            })
+            result.append({
+                "id": p.id,
+                "slug": p.slug,
+                "name": p.name,
+                "description": p.description,
+                "board_slug": p.board_slug,
+                "assignment": _resolve_assignment(p.board_slug, board_to_team, board_to_company),
+                "extension": ext.to_dict() if ext else None,
+                "documents": [d.to_dict() for d in docs],
+                "sub_projects": sub_projects,
+            })
+        return {"projects": result}
     finally:
         conn.close()
-
-    result = []
-    for p in projects:
-        result.append({
-            "id": p.id,
-            "slug": p.slug,
-            "name": p.name,
-            "description": p.description,
-            "board_slug": p.board_slug,
-            "assignment": _resolve_assignment(p.board_slug, board_to_team, board_to_company),
-        })
-    return {"projects": result}
 
 
 class CreateProjectBody(BaseModel):
@@ -683,6 +702,167 @@ def create_fleet_project(payload: CreateProjectBody):
             raise HTTPException(status_code=400, detail=str(exc))
 
     return {"project_id": project_id, "board_slug": board_slug}
+
+
+class UpdateProjectBody(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    workspace_path: Optional[str] = None
+    github_url: Optional[str] = None
+    parent_project_id: Optional[str] = None
+    clear_workspace: bool = False
+    clear_github: bool = False
+    clear_parent: bool = False
+
+
+@router.patch("/projects/{project_id}")
+def update_project(project_id: str, payload: UpdateProjectBody):
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        raise HTTPException(status_code=503, detail="projects_db unavailable")
+
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"unknown project: {project_id}")
+        if payload.name is not None or payload.description is not None:
+            projects_db.update_project(
+                pconn, project_id,
+                name=payload.name,
+                description=payload.description,
+            )
+
+    conn = _conn()
+    try:
+        fleet_db.upsert_project_extension(
+            conn, project_id,
+            workspace_path=payload.workspace_path,
+            github_url=payload.github_url,
+            parent_project_id=payload.parent_project_id,
+            clear_workspace=payload.clear_workspace,
+            clear_github=payload.clear_github,
+            clear_parent=payload.clear_parent,
+        )
+        ext = fleet_db.get_project_extension(conn, project_id)
+    finally:
+        conn.close()
+
+    with projects_db.connect_closing() as pconn:
+        project = projects_db.get_project(pconn, project_id)
+    return {"project": {"id": project.id, "name": project.name, "description": project.description} if project else None, "extension": ext.to_dict() if ext else None}
+
+
+# ---------------------------------------------------------------------------
+# Sub-projects
+# ---------------------------------------------------------------------------
+
+
+class CreateSubProjectBody(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/subprojects")
+def create_sub_project(project_id: str, payload: CreateSubProjectBody):
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        raise HTTPException(status_code=503, detail="projects_db unavailable")
+
+    with projects_db.connect_closing() as pconn:
+        parent = projects_db.get_project(pconn, project_id)
+        if parent is None:
+            raise HTTPException(status_code=404, detail=f"unknown parent project: {project_id}")
+        sub_id = projects_db.create_project(pconn, name=payload.name, description=payload.description)
+
+    conn = _conn()
+    try:
+        fleet_db.upsert_project_extension(conn, sub_id, parent_project_id=project_id)
+    finally:
+        conn.close()
+
+    return {"project_id": sub_id}
+
+
+@router.get("/projects/{project_id}/subprojects")
+def list_sub_projects(project_id: str):
+    conn = _conn()
+    try:
+        sub_exts = fleet_db.list_sub_projects(conn, project_id)
+    finally:
+        conn.close()
+
+    try:
+        from hermes_cli import projects_db
+    except ImportError:
+        return {"sub_projects": []}
+
+    result = []
+    with projects_db.connect_closing() as pconn:
+        for se in sub_exts:
+            sp = projects_db.get_project(pconn, se.project_id)
+            if sp:
+                result.append({
+                    "id": sp.id,
+                    "slug": sp.slug,
+                    "name": sp.name,
+                    "description": sp.description,
+                    "extension": se.to_dict(),
+                })
+    return {"sub_projects": result}
+
+
+# ---------------------------------------------------------------------------
+# Project documents
+# ---------------------------------------------------------------------------
+
+
+class AddDocumentBody(BaseModel):
+    name: str
+    url: Optional[str] = None
+    doc_type: str = "link"
+    notes: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/documents")
+def list_documents(project_id: str):
+    conn = _conn()
+    try:
+        docs = fleet_db.list_project_documents(conn, project_id)
+        return {"documents": [d.to_dict() for d in docs]}
+    finally:
+        conn.close()
+
+
+@router.post("/projects/{project_id}/documents")
+def add_document(project_id: str, payload: AddDocumentBody):
+    conn = _conn()
+    try:
+        doc_id = fleet_db.add_project_document(
+            conn, project_id,
+            name=payload.name, url=payload.url,
+            doc_type=payload.doc_type, notes=payload.notes,
+        )
+        docs = fleet_db.list_project_documents(conn, project_id)
+        doc = next((d for d in docs if d.id == doc_id), None)
+        return {"document": doc.to_dict() if doc else None}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@router.delete("/projects/{project_id}/documents/{doc_id}")
+def remove_document(project_id: str, doc_id: str):
+    conn = _conn()
+    try:
+        fleet_db.remove_project_document(conn, doc_id)
+        return {"removed": doc_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

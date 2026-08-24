@@ -375,7 +375,7 @@ def list_fleet_roles(company: str = Query(...)):
         conn.close()
 
 
-@router.put("/fleet-roles/{role_type}")
+@router.post("/fleet-roles/{role_type}")
 def set_fleet_role(role_type: str, payload: SetFleetRoleBody, company: str = Query(...)):
     conn = _conn()
     try:

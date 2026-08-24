@@ -235,7 +235,7 @@
     function save() {
       if (!profile.trim()) { setError("Profile is required"); return; }
       api("/fleet-roles/" + encodeURIComponent(roleType) + "?company=" + encodeURIComponent(companySlug), {
-        method: "PUT",
+        method: "POST",
         body: JSON.stringify({ profile: profile.trim() }),
       })
         .then(function () { setEditing(false); setError(null); onDone(); })

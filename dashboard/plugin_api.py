@@ -1,6 +1,6 @@
-"""Hermes Fleet dashboard plugin — backend API routes.
+"""Hermes Legion dashboard plugin — backend API routes.
 
-Mounted at /api/plugins/hermes-fleet/ by the dashboard plugin system.
+Mounted at /api/plugins/hermes-legion/ by the dashboard plugin system.
 
 This layer is intentionally thin: every handler is a small wrapper around
 ``db.py`` (the plugin's own data layer), which is the exact same module the
@@ -57,9 +57,9 @@ except Exception:  # Allows local unit tests without dashboard dependencies.
 from pydantic import BaseModel
 
 _DB_PATH = Path(__file__).resolve().parent.parent / "db.py"
-_spec = importlib.util.spec_from_file_location("hermes_fleet_db", _DB_PATH)
+_spec = importlib.util.spec_from_file_location("hermes_legion_db", _DB_PATH)
 fleet_db = importlib.util.module_from_spec(_spec)
-sys.modules["hermes_fleet_db"] = fleet_db
+sys.modules["hermes_legion_db"] = fleet_db
 _spec.loader.exec_module(fleet_db)
 
 router = APIRouter()
@@ -547,7 +547,7 @@ def create_fleet_task(payload: CreateTaskBody):
             title=payload.title,
             body=payload.body,
             assignee=payload.assignee or None,
-            created_by="hermes-fleet",
+            created_by="hermes-legion",
         )
     return {"task_id": task_id, "board_slug": board_slug}
 

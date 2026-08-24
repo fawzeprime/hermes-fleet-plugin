@@ -1,6 +1,6 @@
 {
-  "name": "hermes-fleet",
-  "label": "Fleet",
+  "name": "hermes-legion",
+  "label": "Legion",
   "description": "Companies, teams, and reporting lines across Hermes agent profiles",
   "icon": "Users",
   "version": "0.1.0",

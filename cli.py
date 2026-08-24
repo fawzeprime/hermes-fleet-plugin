@@ -1,4 +1,4 @@
-"""CLI commands for the Hermes Fleet plugin (``hermes fleet ...``)."""
+"""CLI commands for the Hermes Legion plugin (``hermes fleet ...``)."""
 
 from __future__ import annotations
 

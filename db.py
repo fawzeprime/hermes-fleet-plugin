@@ -1,4 +1,4 @@
-"""Hermes Fleet — persistent org-chart data layer.
+"""Hermes Legion — persistent org-chart data layer.
 
 Companies contain teams; teams contain memberships (a Hermes profile staffed
 into the team with a role and, optionally, a reporting line to another

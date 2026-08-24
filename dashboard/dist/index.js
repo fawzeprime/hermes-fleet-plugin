@@ -1,8 +1,8 @@
 /**
- * Hermes Fleet — Dashboard Plugin
+ * Hermes Legion — Dashboard Plugin
  *
  * Org-chart view (companies -> teams -> members) backed by ~/.hermes/fleet.db.
- * Calls the plugin's backend at /api/plugins/hermes-fleet/.
+ * Calls the plugin's backend at /api/plugins/hermes-legion/.
  *
  * Plain IIFE, no build step. Uses window.__HERMES_PLUGIN_SDK__ for React +
  * shadcn primitives, mirroring the kanban dashboard plugin's structure.
@@ -43,7 +43,7 @@
     if (opts.body && !opts.headers) {
       opts.headers = { "Content-Type": "application/json" };
     }
-    return SDK.fetchJSON("/api/plugins/hermes-fleet" + path, opts);
+    return SDK.fetchJSON("/api/plugins/hermes-legion" + path, opts);
   }
 
   // The SDK's Select fires onValueChange(value) directly (shadcn-style
@@ -537,9 +537,9 @@
 
   function CompanyCard({ company, allProfiles, projects, boards, onChanged }) {
     function deleteCompany() {
-      const teamCount = company.teams.length;
-      const memberCount = company.teams.reduce(function (n, t) { return n + t.members.length; }, 0);
-      const warning = teamCount > 0
+      var teamCount = company.teams.length;
+      var memberCount = company.teams.reduce(function (n, t) { return n + t.members.length; }, 0);
+      var warning = teamCount > 0
         ? ` This will also delete its ${teamCount} team(s) and ${memberCount} agent assignment(s).`
         : "";
       if (!window.confirm("Delete fleet \"" + company.name + "\"?" + warning)) return;
@@ -547,6 +547,13 @@
         .then(onChanged)
         .catch(function (err) { window.alert(String(err)); });
     }
+
+    // Build fleet-level role lookup for hierarchy
+    var rolesByType = {};
+    (company.fleet_roles || []).forEach(function (r) { rolesByType[r.role_type] = r; });
+    var leader = rolesByType["leader"] || null;
+    var manager = rolesByType["manager"] || null;
+    var hasTeams = company.teams.length > 0;
 
     return h(Card, { className: "hf-company" },
       h(CardContent, null,
@@ -562,6 +569,48 @@
         ),
         company.description && h("p", { className: "hf-description" }, company.description),
         h(FleetRolesPanel, { company: company, onChanged: onChanged }),
+
+        // Hierarchy flowchart at the top of the fleet card
+        hasTeams && h("div", { className: "hf-fleet-hierarchy" },
+          h("div", { className: "hf-fleet-hierarchy-label" }, "Hierarchy"),
+
+          // Leadership banner
+          (leader || manager) && h("div", { className: "hf-hierarchy-leadership" },
+            leader && h("div", { className: "hf-hierarchy-leader" },
+              h("div", { className: "hf-node hf-node-leader" },
+                h("div", { className: "hf-node-name" }, leader.profile),
+                h("div", { className: "hf-node-role" }, "Leader / CEO")
+              )
+            ),
+            manager && h("div", { className: "hf-hierarchy-manager" },
+              leader && h("div", { className: "hf-hierarchy-connector" }),
+              h("div", { className: "hf-node hf-node-manager" },
+                h("div", { className: "hf-node-name" }, manager.profile),
+                h("div", { className: "hf-node-role" }, "Manager")
+              )
+            )
+          ),
+
+          // Global agents badges
+          (rolesByType["summariser"] || rolesByType["reflection_coach"]) && h("div", { className: "hf-hierarchy-global-agents" },
+            rolesByType["summariser"] && h(Badge, { tone: "outline", className: "hf-global-agent-badge" },
+              "Summariser: " + rolesByType["summariser"].profile
+            ),
+            rolesByType["reflection_coach"] && h(Badge, { tone: "outline", className: "hf-global-agent-badge" },
+              "Reflection Coach: " + rolesByType["reflection_coach"].profile
+            )
+          ),
+
+          // Team flowcharts
+          h("div", { className: "hf-fleet-hierarchy-teams" },
+            company.teams.map(function (t) {
+              return h("div", { key: t.id, className: "hf-hierarchy-team" },
+                h(TeamFlowchart, { team: t, leader: leader, manager: manager })
+              );
+            })
+          )
+        ),
+
         h("div", { className: "hf-teams" },
           company.teams.length === 0 && h("div", { className: "hf-empty" }, "No teams yet."),
           company.teams.map(function (t) {
@@ -1274,7 +1323,6 @@
   const TABS = [
     { id: "dashboard", label: "Dashboard" },
     { id: "orgchart", label: "Org Chart" },
-    { id: "hierarchy", label: "Hierarchy" },
     { id: "projects", label: "Projects" },
   ];
 
@@ -1332,7 +1380,7 @@
       h("div", { className: "hf-header" },
         h("div", null,
           h("div", { className: "hf-kicker" }, "Org chart"),
-          h("h1", null, "Hermes Fleet"),
+          h("h1", null, "Hermes Legion"),
           h("p", null, "Companies, teams, and reporting lines across Hermes agent profiles.")
         ),
         h("div", { className: "hf-header-actions" },
@@ -1353,7 +1401,6 @@
         onOpenProjects: function () { setTab("projects"); },
       }),
       tab === "orgchart" && h(OrgChartTab, { companies: companies, profiles: profiles, projects: projects, boards: kanbanBoards, loading: loading, error: error, load: load }),
-      tab === "hierarchy" && h(HierarchyTab, { companies: companies }),
       tab === "projects" && h(ProjectsTab, {
         projects: projects, tasks: tasks, loading: projectsLoading || tasksLoading, companies: companies,
         onChanged: function () { loadProjects(); loadTasks(); load(); },
@@ -1361,5 +1408,5 @@
     );
   }
 
-  window.__HERMES_PLUGINS__.register("hermes-fleet", FleetPage);
+  window.__HERMES_PLUGINS__.register("hermes-legion", FleetPage);
 })();

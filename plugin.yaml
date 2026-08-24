@@ -1,4 +1,4 @@
-name: hermes-fleet
+name: hermes-legion
 version: 0.1.0
 description: "Persistent org-chart layer over Hermes agent profiles — companies, teams, and reporting lines."
 author: sirfawze@gmail.com

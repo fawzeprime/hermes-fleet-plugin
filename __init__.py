@@ -1,4 +1,4 @@
-"""Hermes Fleet plugin — persistent org-chart layer over Hermes agent profiles.
+"""Hermes Legion plugin — persistent org-chart layer over Hermes agent profiles.
 
 Registers only operator-facing CLI surfaces. The agent should invoke these via
 the terminal tool; no model tools are added by this plugin (v1 scope).
@@ -16,7 +16,7 @@ def register(ctx) -> None:
         setup_fn=register_cli,
         handler_fn=fleet_command,
         description=(
-            "Operator CLI for the Hermes Fleet org-chart layer: companies, "
+            "Operator CLI for the Hermes Legion org-chart layer: companies, 
             "teams, and memberships (role + reporting line) across Hermes "
             "agent profiles."
         ),

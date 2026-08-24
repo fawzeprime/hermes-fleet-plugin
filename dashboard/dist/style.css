@@ -424,6 +424,31 @@
   border-top: 1px solid rgba(127, 127, 127, 0.15);
 }
 
+/* Fleet hierarchy (embedded in company card) */
+
+.hf-fleet-hierarchy {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.15);
+}
+
+.hf-fleet-hierarchy-label {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.hf-fleet-hierarchy-teams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin-top: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
 .hf-fleet-roles-label {
   font-size: 0.78rem;
   opacity: 0.6;
